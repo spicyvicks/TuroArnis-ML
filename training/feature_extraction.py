@@ -31,8 +31,8 @@ def calculate_angle_3d(a, b, c):
         return 0
     return np.degrees(np.arccos(np.clip(dot_product / magnitude, -1.0, 1.0)))
 
-def extract_angles_from_image(image_path):
-    """extract joint angles and key positions (54 features - expanded)"""
+def extract_angles_from_image(image_path, verbose=False):
+    """extract joint angles and key positions (58 features - expanded)"""
     global worker_pose_instance
     if worker_pose_instance is None:
         init_worker()
@@ -96,11 +96,11 @@ def extract_angles_from_image(image_path):
         right_wrist_rel = [lm[16].x - lm[12].x, lm[16].y - lm[12].y, lm[16].z - lm[12].z]
         
         hip_center = [(lm[23].x + lm[24].x)/2, (lm[23].y + lm[24].y)/2, (lm[23].z + lm[24].z)/2]
-        left_hand_rel = [lm[19].x - hip_center[0], lm[19].y - hip_center[1]]
-        right_hand_rel = [lm[20].x - hip_center[0], lm[20].y - hip_center[1]]
+        left_hand_rel = [lm[19].x - hip_center[0], lm[19].y - hip_center[1], lm[19].z - hip_center[2]]
+        right_hand_rel = [lm[20].x - hip_center[0], lm[20].y - hip_center[1], lm[20].z - hip_center[2]]
         
-        left_foot_rel = [lm[31].x - hip_center[0], lm[31].y - hip_center[1]]
-        right_foot_rel = [lm[32].x - hip_center[0], lm[32].y - hip_center[1]]
+        left_foot_rel = [lm[31].x - hip_center[0], lm[31].y - hip_center[1], lm[31].z - hip_center[2]]
+        right_foot_rel = [lm[32].x - hip_center[0], lm[32].y - hip_center[1], lm[32].z - hip_center[2]]
         
         shoulder_tilt = lm[11].y - lm[12].y
         hip_tilt = lm[23].y - lm[24].y
@@ -137,25 +137,27 @@ def extract_angles_from_image(image_path):
         
         # ===== BODY PROPORTIONS (4 new) =====
         arm_span = abs(lm[15].x - lm[16].x)
-        body_height = abs(lm[0].y - (lm[27].y + lm[28].y)/2)
+        body_height = abs(lm[0].y - (lm[27].y + lm[28].y)/2)  # abs() handles inverted detections
         arm_to_height_ratio = arm_span / (body_height + 0.001)  # avoid division by zero
         stance_depth = abs(lm[27].z - lm[28].z)  # front-back foot difference
         
         proportions = [arm_span, body_height, arm_to_height_ratio, stance_depth]
         
-        # ===== COMBINE ALL FEATURES (54 total) =====
+        # ===== COMBINE ALL FEATURES (58 total) =====
         features = (angles +                    # 15 features
                    cross_body_angles +          # 4 features
                    left_wrist_rel + right_wrist_rel +  # 6 features
-                   left_hand_rel + right_hand_rel +    # 4 features
-                   left_foot_rel + right_foot_rel +    # 4 features
+                   left_hand_rel + right_hand_rel +    # 6 features (was 4, added Z)
+                   left_foot_rel + right_foot_rel +    # 6 features (was 4, added Z)
                    [shoulder_tilt, hip_tilt, stance_width, facing_direction] +  # 4 features
                    distances +                  # 8 features
                    symmetry +                   # 5 features
                    proportions)                 # 4 features
         return features
         
-    except Exception:
+    except Exception as e:
+        if verbose:
+            print(f"[WARN] Extraction failed for {image_path}: {e}")
         return None
 
 def extract_coordinates_from_image(image_path):
@@ -212,11 +214,13 @@ def extract_features_from_dataset(dataset_path, csv_output_path, feature_mode='a
                       'left_arm_raise', 'right_arm_raise', 'torso_lean']
         # 4 cross-body angles
         cross_body_names = ['cross_left_hand', 'cross_right_hand', 'diagonal_left', 'diagonal_right']
-        # 18 relative positions
+        # 22 relative positions (added Z to hand/foot)
         position_names = ['lwrist_rel_x', 'lwrist_rel_y', 'lwrist_rel_z',
                          'rwrist_rel_x', 'rwrist_rel_y', 'rwrist_rel_z',
-                         'lhand_rel_x', 'lhand_rel_y', 'rhand_rel_x', 'rhand_rel_y',
-                         'lfoot_rel_x', 'lfoot_rel_y', 'rfoot_rel_x', 'rfoot_rel_y',
+                         'lhand_rel_x', 'lhand_rel_y', 'lhand_rel_z',
+                         'rhand_rel_x', 'rhand_rel_y', 'rhand_rel_z',
+                         'lfoot_rel_x', 'lfoot_rel_y', 'lfoot_rel_z',
+                         'rfoot_rel_x', 'rfoot_rel_y', 'rfoot_rel_z',
                          'shoulder_tilt', 'hip_tilt', 'stance_width', 'facing_direction']
         # 8 distance features
         distance_names = ['hand_distance', 'wrist_distance', 'left_arm_ext', 'right_arm_ext',
