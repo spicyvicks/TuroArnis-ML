@@ -5,10 +5,10 @@ import time
 import numpy as np
 from tqdm import tqdm
 
-# configuration
-INPUT_DATASET_FOLDER = "dataset"
-OUTPUT_DATASET_FOLDER = "dataset_aug"
-IMAGES_PER_ORIGINAL = 15  
+# configuration - augment ONLY the training set (prevents data leakage)
+INPUT_DATASET_FOLDER = "dataset_split/train"  # only train set
+OUTPUT_DATASET_FOLDER = "dataset_split/train_aug"  # augmented train output
+IMAGES_PER_ORIGINAL = 15
 
 def get_pose_augmentation_pipeline():
     """

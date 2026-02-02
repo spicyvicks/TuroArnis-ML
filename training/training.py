@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
 worker_pose_instance = None
@@ -207,8 +206,15 @@ if __name__ == "__main__":
     project_root = os.path.dirname(current_dir)
     sys.path.append(project_root)
 
-    dataset_folder = os.path.join(project_root, 'dataset_aug')
-    csv_output_file = os.path.join(project_root, 'arnis_poses_coordinates_aug.csv')
+    # use pre-split datasets to prevent data leakage
+    # run split_dataset.py first, then data_augmentation.py
+    train_folder = os.path.join(project_root, 'dataset_split', 'train_aug')  # augmented train
+    val_folder = os.path.join(project_root, 'dataset_split', 'val')  # clean val (no aug)
+    test_folder = os.path.join(project_root, 'dataset_split', 'test')  # clean test (no aug)
+    
+    csv_train_file = os.path.join(project_root, 'features_train.csv')
+    csv_val_file = os.path.join(project_root, 'features_val.csv')
+    csv_test_file = os.path.join(project_root, 'features_test.csv')
     models_dir = os.path.join(project_root, 'models')
     
     # versioned model saving
@@ -250,39 +256,18 @@ if __name__ == "__main__":
     
     RUN_FEATURE_EXTRACTION = True 
 
-    if RUN_FEATURE_EXTRACTION:
-        # set csv file and extraction function based on mode
-        if FEATURE_MODE == 'angles':
-            csv_output_file = os.path.join(project_root, 'arnis_poses_angles.csv')
-            extraction_func = extract_angles_from_image
-            # header for 35 angle features
-            angle_names = ['left_elbow', 'right_elbow', 'left_shoulder', 'right_shoulder',
-                          'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
-                          'left_knee', 'right_knee', 'left_ankle', 'right_ankle',
-                          'left_arm_raise', 'right_arm_raise', 'torso_lean']
-            position_names = ['lwrist_rel_x', 'lwrist_rel_y', 'lwrist_rel_z',
-                             'rwrist_rel_x', 'rwrist_rel_y', 'rwrist_rel_z',
-                             'lhand_rel_x', 'lhand_rel_y', 'rhand_rel_x', 'rhand_rel_y',
-                             'lfoot_rel_x', 'lfoot_rel_y', 'rfoot_rel_x', 'rfoot_rel_y',
-                             'shoulder_tilt', 'hip_tilt', 'stance_width', 'facing_direction']
-            header = ['class'] + angle_names + position_names
-            print(f"\n[STAGE 1] Extracting ANGLE features (33 features)...")
-        else:
-            csv_output_file = os.path.join(project_root, 'arnis_poses_coordinates.csv')
-            extraction_func = extract_coordinates_from_image
-            header = ['class'] + [f'{ax}_{i}' for i in range(33) for ax in ['x', 'y', 'z']]
-            print(f"\n[STAGE 1] Extracting COORDINATE features (99 features)...")
+    # helper function to extract features from a dataset folder
+    def extract_features_from_folder(folder_path, csv_path, extraction_func, header, desc="Extracting"):
+        if not os.path.exists(folder_path):
+            print(f"\n[ERROR] Folder not found: {folder_path}")
+            return 0
         
-        if not os.path.exists(dataset_folder):
-            print(f"\n[ERROR] Dataset folder not found: {dataset_folder}")
-            sys.exit(1)
-        
-        pose_classes = sorted([d for d in os.listdir(dataset_folder) if os.path.isdir(os.path.join(dataset_folder, d))])
+        pose_classes = sorted([d for d in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, d))])
         
         all_image_paths = []
         path_to_class_map = {}
         for class_name in pose_classes:
-            class_folder_path = os.path.join(dataset_folder, class_name)
+            class_folder_path = os.path.join(folder_path, class_name)
             for item in os.listdir(class_folder_path):
                  item_path = os.path.join(class_folder_path, item)
                  if os.path.isdir(item_path):
@@ -296,19 +281,19 @@ if __name__ == "__main__":
                     all_image_paths.append(full_path)
                     path_to_class_map[full_path] = class_name
         
+        if not all_image_paths:
+            print(f"[WARN] No images found in {folder_path}")
+            return 0
+        
         MAX_PROCESSES_CAP = 6  
         num_processes = max(1, min(cpu_count() - 1, MAX_PROCESSES_CAP))
         
-        print(f"  - Found {len(all_image_paths)} images")
-        print(f"  - Using {num_processes} processes")
-        print(f"  - Mode: {FEATURE_MODE.upper()}")
-
         with Pool(processes=num_processes, initializer=init_worker) as pool:
             features = pool.imap(extraction_func, all_image_paths)
-            results = list(tqdm(features, total=len(all_image_paths), desc="  - Extracting"))
-
+            results = list(tqdm(features, total=len(all_image_paths), desc=f"  - {desc}"))
+        
         success_count = 0
-        with open(csv_output_file, 'w', newline='') as f:
+        with open(csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(header)
             for i, feat in enumerate(results):
@@ -318,60 +303,105 @@ if __name__ == "__main__":
                     writer.writerow([class_name] + feat)
                     success_count += 1
         
-        print(f"\n[SUCCESS] Extracted {success_count} samples → {os.path.basename(csv_output_file)}")
+        return success_count
+
+    if RUN_FEATURE_EXTRACTION:
+        # set extraction function and header based on mode
+        if FEATURE_MODE == 'angles':
+            extraction_func = extract_angles_from_image
+            angle_names = ['left_elbow', 'right_elbow', 'left_shoulder', 'right_shoulder',
+                          'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
+                          'left_knee', 'right_knee', 'left_ankle', 'right_ankle',
+                          'left_arm_raise', 'right_arm_raise', 'torso_lean']
+            position_names = ['lwrist_rel_x', 'lwrist_rel_y', 'lwrist_rel_z',
+                             'rwrist_rel_x', 'rwrist_rel_y', 'rwrist_rel_z',
+                             'lhand_rel_x', 'lhand_rel_y', 'rhand_rel_x', 'rhand_rel_y',
+                             'lfoot_rel_x', 'lfoot_rel_y', 'rfoot_rel_x', 'rfoot_rel_y',
+                             'shoulder_tilt', 'hip_tilt', 'stance_width', 'facing_direction']
+            header = ['class'] + angle_names + position_names
+            print(f"\n[STAGE 1] Extracting ANGLE features (33 features)...")
+        else:
+            extraction_func = extract_coordinates_from_image
+            header = ['class'] + [f'{ax}_{i}' for i in range(33) for ax in ['x', 'y', 'z']]
+            print(f"\n[STAGE 1] Extracting COORDINATE features (99 features)...")
+        
+        # check that split folders exist
+        if not os.path.exists(train_folder):
+            print(f"\n[ERROR] Training folder not found: {train_folder}")
+            print("Run these commands first:")
+            print("  1. python training/split_dataset.py")
+            print("  2. python training/data_augmentation.py")
+            sys.exit(1)
+        
+        print(f"  - Mode: {FEATURE_MODE.upper()}")
+        print(f"  - Train folder: {train_folder}")
+        print(f"  - Val folder: {val_folder}")
+        print(f"  - Test folder: {test_folder}")
+        
+        # extract features from each split separately (NO DATA LEAKAGE)
+        print("\n  Extracting from TRAIN set (augmented)...")
+        train_count = extract_features_from_folder(train_folder, csv_train_file, extraction_func, header, "Train")
+        
+        print("\n  Extracting from VAL set (clean)...")
+        val_count = extract_features_from_folder(val_folder, csv_val_file, extraction_func, header, "Val")
+        
+        print("\n  Extracting from TEST set (clean)...")
+        test_count = extract_features_from_folder(test_folder, csv_test_file, extraction_func, header, "Test")
+        
+        print(f"\n[SUCCESS] Feature extraction complete:")
+        print(f"  - Train: {train_count} samples")
+        print(f"  - Val: {val_count} samples")
+        print(f"  - Test: {test_count} samples")
         print("="*50)
         
-        if success_count == 0:
-            print("[ERROR] No features extracted. Check images.")
+        if train_count == 0:
+            print("[ERROR] No training features extracted. Check images.")
             sys.exit(1)
             
     else:
-        print("\n[STAGE 1] Skipping extraction. Using existing CSV.")
-        if not os.path.exists(csv_output_file):
-            print(f"[ERROR] Skipping extraction but CSV file not found: {csv_output_file}")
-            sys.exit(1)
+        print("\n[STAGE 1] Skipping extraction. Using existing CSVs.")
+        for csv_file in [csv_train_file, csv_val_file, csv_test_file]:
+            if not os.path.exists(csv_file):
+                print(f"[ERROR] CSV file not found: {csv_file}")
+                sys.exit(1)
         print("="*50)
 
     print("\n[STAGE 2] Starting Model Training...")
     
-    data = pd.read_csv(csv_output_file).dropna()
+    # load pre-split datasets (NO train_test_split needed - data is already split!)
+    train_data = pd.read_csv(csv_train_file).dropna()
+    val_data = pd.read_csv(csv_val_file).dropna()
+    test_data = pd.read_csv(csv_test_file).dropna()
     
-    if data.empty:
-        print("\n[CRITICAL ERROR] CSV file loaded, but it is empty after dropping missing values (.dropna()). Cannot train.")
+    if train_data.empty:
+        print("\n[CRITICAL ERROR] Training CSV is empty. Cannot train.")
         sys.exit(1)
-
-    class_counts = data['class'].value_counts()  
-    MIN_SAMPLES_PER_CLASS = 2 
-    valid_classes = class_counts[class_counts >= MIN_SAMPLES_PER_CLASS].index
-    data = data[data['class'].isin(valid_classes)]
-    removed_classes_count = len(class_counts) - len(valid_classes)
-    if removed_classes_count > 0:
-        print(f"  - WARNING: Removed {removed_classes_count} classes with < {MIN_SAMPLES_PER_CLASS} sample(s) for stratified split.")
     
-    if data.empty:
-        print("\n[CRITICAL ERROR] All data was removed after filtering for minimum samples. Cannot train.")
-        sys.exit(1)
-
-    X = data.drop('class', axis=1).values
-    y_labels = data['class'].values
-    
+    # fit label encoder on training data
     label_encoder = LabelEncoder()
-    y = label_encoder.fit_transform(y_labels)
+    label_encoder.fit(train_data['class'].values)
     
     class_names = list(label_encoder.classes_)
     num_classes = len(class_names)
-    num_features = X.shape[1]
+    
+    # prepare train set
+    X_train = train_data.drop('class', axis=1).values
+    y_train = label_encoder.transform(train_data['class'].values)
+    
+    # prepare val set (filter to known classes)
+    val_data = val_data[val_data['class'].isin(class_names)]
+    X_val = val_data.drop('class', axis=1).values
+    y_val = label_encoder.transform(val_data['class'].values)
+    
+    # prepare test set (filter to known classes)
+    test_data = test_data[test_data['class'].isin(class_names)]
+    X_test = test_data.drop('class', axis=1).values
+    y_test = label_encoder.transform(test_data['class'].values)
+    
+    num_features = X_train.shape[1]
     print(f"  - Training on {num_features} features for {num_classes} classes.")
-    
-    if len(X) < 2: 
-        print(f"\n[CRITICAL ERROR] Only {len(X)} sample(s) available. Need at least 2 for train_test_split. Cannot train.")
-        sys.exit(1)
-
-    # data split: train (70%), validation (10%), test (20%)
-    X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-    X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=0.125, random_state=42, stratify=y_temp)
-    
-    print(f"  - Data split: {len(X_train)} train, {len(X_val)} val, {len(X_test)} test")
+    print(f"  - Data loaded: {len(X_train)} train, {len(X_val)} val, {len(X_test)} test")
+    print(f"  - [NO DATA LEAKAGE] Train/Val/Test sets are completely separate")
     
     # apply feature scaling (critical for neural networks)
     scaler = StandardScaler()
