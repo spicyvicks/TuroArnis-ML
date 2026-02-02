@@ -1,0 +1,25 @@
+{
+  "version": "v025_20260203_030725_random_forest",
+  "model_type": "random_forest",
+  "trained_at": "2026-02-03T03:07:25.438915",
+  "test_accuracy": 0.22404371584699453,
+  "hyperparameters": {
+    "max_depth": 20,
+    "min_samples_split": 5,
+    "n_estimators": 300
+  },
+  "class_names": [
+    "crown_thrust_correct",
+    "left_chest_thrust_correct",
+    "left_elbow_block_correct",
+    "left_eye_thrust_correct",
+    "left_knee_block_correct",
+    "left_temple_block_correct",
+    "right_chest_thrust_correct",
+    "right_elbow_block_correct",
+    "right_eye_thrust_correct",
+    "right_knee_block_correct",
+    "right_temple_block_correct",
+    "solar_plexus_thrust_correct"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "version": "v026_20260203_032029_xgboost",
+  "path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v026_20260203_032029_xgboost",
+  "model_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v026_20260203_032029_xgboost\\model_xgb.joblib",
+  "model_type": "xgboost",
+  "encoder_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v026_20260203_032029_xgboost\\label_encoder.joblib",
+  "scaler_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v026_20260203_032029_xgboost\\scaler.joblib",
+  "test_accuracy": 0.2677595628415301,
+  "set_at": "2026-02-03T03:20:29.207415"
+}

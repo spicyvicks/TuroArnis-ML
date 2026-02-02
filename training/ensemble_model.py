@@ -265,27 +265,20 @@ class EnsembleClassifier:
 
 
 def evaluate_ensemble(csv_path=None, model_versions=None, voting='soft', weights=None):
-    # Default CSV path
-    if csv_path is None:
-        csv_path = os.path.join(project_root, 'arnis_poses_angles.csv')
+    # FORCE USE OF features_test.csv
+    csv_path = os.path.join(project_root, 'features_test.csv')
     
     if not os.path.exists(csv_path):
-        print(f"[ERROR] CSV file not found: {csv_path}")
-        return
+        print(f"[ERROR] Test data not found: {csv_path}")
+        return None, 0
     
-    print(f"\n[INFO] Loading dataset from: {os.path.basename(csv_path)}")
+    print(f"\n[INFO] Loading test dataset...")
     df = pd.read_csv(csv_path)
     
     # Extract features and labels
-    X = df.drop('class', axis=1).values
-    y = df['class'].values
+    X_test = df.drop('class', axis=1).values
+    y_test = df['class'].values
     
-    # Split data
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
-    
-    print(f"[INFO] Dataset: {len(X)} samples, {X.shape[1]} features")
     print(f"[INFO] Test set: {len(X_test)} samples\n")
     
     # Create ensemble
@@ -333,30 +326,29 @@ def evaluate_ensemble(csv_path=None, model_versions=None, voting='soft', weights
 def optimize_ensemble_weights(csv_path=None, model_versions=None, voting='soft'):
     # Default CSV path
     if csv_path is None:
-        csv_path = os.path.join(project_root, 'arnis_poses_angles.csv')
-    
-    if not os.path.exists(csv_path):
-        print(f"[ERROR] CSV file not found: {csv_path}")
-        return None, 0, None
-    
+        csv_path = os.path.join(project_root, 'features_val.csv')
+
     print(f"\n{'='*60}")
     print(f"  OPTIMIZING ENSEMBLE WEIGHTS")
     print(f"{'='*60}\n")
     
-    # Load data
-    df = pd.read_csv(csv_path)
-    X = df.drop('class', axis=1).values
-    y = df['class'].values
+    print(f"[INFO] Loading validation and test data...")
+    val_path = os.path.join(project_root, 'features_val.csv')
+    test_path = os.path.join(project_root, 'features_test.csv')
     
-    # Split: 60% train, 20% validation, 20% test
-    X_temp, X_test, y_temp, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_temp, y_temp, test_size=0.25, random_state=42, stratify=y_temp  # 0.25 * 0.8 = 0.2
-    )
+    if not os.path.exists(val_path) or not os.path.exists(test_path):
+        print(f"[ERROR] CSV files not found. Run run_extraction.py first.")
+        return None, 0, None
+        
+    df_val = pd.read_csv(val_path)
+    X_val = df_val.drop('class', axis=1).values
+    y_val = df_val['class'].values
     
-    print(f"[INFO] Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)} samples\n")
+    df_test = pd.read_csv(test_path)
+    X_test = df_test.drop('class', axis=1).values
+    y_test = df_test['class'].values
+    
+    print(f"[INFO] Val: {len(X_val)}, Test: {len(X_test)} samples\n")
     
     # Create base ensemble to get model list
     base_ensemble = EnsembleClassifier(
@@ -735,20 +727,29 @@ def generate_ensemble_visualizations(version_path, csv_path=None):
         if not os.path.isabs(csv_path):
             csv_path = os.path.join(project_root, csv_path)
     
+    # Override old CSV references to new pipeline file
+    if 'arnis_poses' in csv_path or not os.path.exists(csv_path):
+        csv_path = os.path.join(project_root, 'features_test.csv')
+    
     if not os.path.exists(csv_path):
         print(f"[ERROR] CSV not found: {csv_path}")
+        print(f"[HINT] Run 'python training/run_extraction.py' to generate features.")
         return False
     
-    # Load data
+    # Load TEST data directly for visualization
+
     print(f"[INFO] Loading data from: {os.path.basename(csv_path)}")
     df = pd.read_csv(csv_path)
-    X = df.drop('class', axis=1).values
-    y = df['class'].values
     
-    # Split data (same as training)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+    # If it's the new split files, X_test is just the content
+    if 'features_test.csv' in os.path.basename(csv_path):
+        X_test = df.drop('class', axis=1).values
+        y_test = df['class'].values
+    else:
+        # Legacy fallback
+        X = df.drop('class', axis=1).values
+        y = df['class'].values
+        _, X_test, _, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     
     # Load ensemble
     print("[INFO] Loading ensemble model...")

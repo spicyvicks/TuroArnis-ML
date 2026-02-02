@@ -124,9 +124,10 @@ def train_random_forest(data_pack):
     rf_base = RandomForestClassifier(random_state=42, n_jobs=-1, class_weight='balanced')
     
     param_grid = {
-        'n_estimators': [100, 200, 300],
-        'max_depth': [10, 15, 20],
-        'min_samples_split': [2, 5],
+        'n_estimators': [100, 150, 200],      # Reduced for speed/generalization
+        'max_depth': [8, 10, 12],             # Tighter depth to prevent overfitting
+        'min_samples_split': [5, 10],         # Require more samples to split (regularization)
+        'min_samples_leaf': [2, 4]            # Require more samples in leaf
     }
     
     n_combinations = np.prod([len(v) for v in param_grid.values()])
@@ -158,6 +159,19 @@ def train_random_forest(data_pack):
     test_acc = accuracy_score(y_test, model.predict(X_test))
     print(f"  Test Acc:    {test_acc:.2%}")
     
+    # Feature Importance (Action 3)
+    if hasattr(model, 'feature_importances_'):
+        importances = model.feature_importances_
+        # map back to feature names (assume scaler doesn't change order, which is true)
+        # We need feature names. They are not in data_pack. 
+        # But we know them from run_extraction logic or we can just print indices.
+        # Ideally passing feature_names would be better, but for now we list top indices.
+        indices = np.argsort(importances)[::-1]
+        print("\n  Top 10 Features:")
+        for f in range(10):
+            if f < len(indices):
+                print(f"    {f+1}. Feature #{indices[f]}: {importances[indices[f]]:.4f}")
+    
     save_model(model, scaler, le, class_names, test_acc, 'random_forest', grid_search.best_params_)
 
 def train_xgboost(data_pack):
@@ -177,14 +191,14 @@ def train_xgboost(data_pack):
                                  random_state=42, n_jobs=1, verbosity=0, use_label_encoder=False)
     
     param_grid = {
-        'n_estimators': [200, 300, 400],
-        'max_depth': [3, 4, 5, 6],
-        'learning_rate': [0.01, 0.05, 0.1],
-        'subsample': [0.7, 0.8, 0.9],
+        'n_estimators': [100, 150, 200],          # Reduced
+        'max_depth': [3, 4, 5],                   # Keep shallow
+        'learning_rate': [0.05, 0.1, 0.2],        # Slightly more aggressive learning
+        'subsample': [0.8, 0.9, 1.0],
         'colsample_bytree': [0.6, 0.7, 0.8]
     }
     
-    n_iter = 20
+    n_iter = 5                           # Drastically reduced to prevent crashing
     cv_folds = 3
     total_fits = n_iter * cv_folds
     
@@ -210,6 +224,15 @@ def train_xgboost(data_pack):
     model = search.best_estimator_
     test_acc = accuracy_score(y_test, model.predict(X_test))
     print(f"  Test Acc:    {test_acc:.2%}")
+    
+    # Feature Importance (Action 3)
+    if hasattr(model, 'feature_importances_'):
+        importances = model.feature_importances_
+        indices = np.argsort(importances)[::-1]
+        print("\n  Top 10 Features:")
+        for f in range(10):
+            if f < len(indices):
+                print(f"    {f+1}. Feature #{indices[f]}: {importances[indices[f]]:.4f}")
     
     save_model(model, scaler, le, class_names, test_acc, 'xgboost', search.best_params_)
 

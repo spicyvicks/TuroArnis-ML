@@ -222,8 +222,8 @@ if __name__ == "__main__":
     
     # 7. Evaluate
     print("\n" + "="*50)
-    val_loss, val_acc = model.evaluate(X_test, y_test, verbose=0)
-    print(f"Final Test Accuracy: {val_acc*100:.2f}%")
+    test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)
+    print(f"Final Test Accuracy: {test_acc*100:.2f}%")
     
     y_pred_proba = model.predict(X_test)
     y_pred = np.argmax(y_pred_proba, axis=1)
@@ -248,8 +248,8 @@ if __name__ == "__main__":
         'version': version_name,
         'model_type': 'dnn',
         'trained_at': datetime.now().isoformat(),
-        'test_accuracy': float(val_acc),
-        'test_loss': float(val_loss),
+        'test_accuracy': float(test_acc),
+        'test_loss': float(test_loss),
         'num_classes': num_classes,
         'num_features': num_features,
         'class_names': class_names
@@ -264,9 +264,9 @@ if __name__ == "__main__":
         try:
             with open(active_model_path, 'r') as f:
                 current = json.load(f)
-            if val_acc <= current.get('test_accuracy', 0):
+            if test_acc <= current.get('test_accuracy', 0):
                 should_set_active = False
-                print(f"[INFO] New model ({val_acc:.2%}) <= Current active ({current.get('test_accuracy', 0):.2%}). Not updating active.")
+                print(f"[INFO] New model ({test_acc:.2%}) <= Current active ({current.get('test_accuracy', 0):.2%}). Not updating active.")
         except:
             pass
             
@@ -277,7 +277,7 @@ if __name__ == "__main__":
             'model_path': model_save_path,
             'encoder_path': encoder_path,
             'scaler_path': scaler_path,
-            'test_accuracy': float(val_acc),
+            'test_accuracy': float(test_acc),
             'model_type': 'dnn',
             'set_at': datetime.now().isoformat()
         }
@@ -285,5 +285,5 @@ if __name__ == "__main__":
             json.dump(active_config, f, indent=2)
         print(f"[INFO] Set as ACTIVE model.")
 
-    exp.finalize(status="completed", notes=f"Test Accuracy: {val_acc:.2%}")
+    exp.finalize(status="completed", notes=f"Test Accuracy: {test_acc:.2%}")
     print("\n[SUCCESS] Training finished.")

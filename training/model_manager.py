@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import shutil
+import subprocess
 from datetime import datetime
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -60,10 +61,30 @@ def set_active_model(version_name):
         print(f"[ERROR] Version {version_name} not found")
         return False
     
+    # Check metadata for model type
+    model_type = 'dnn'
+    meta_path = os.path.join(version_path, 'metadata.json')
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, 'r') as f:
+                meta = json.load(f)
+                model_type = meta.get('model_type', 'dnn')
+        except:
+            pass
+            
+    # Determine correct model filename
+    if model_type == 'random_forest':
+        model_file = 'model_rf.joblib'
+    elif model_type == 'xgboost':
+        model_file = 'model_xgb.joblib'
+    else:
+        model_file = 'model.keras'
+        
     active_config = {
         'version': version_name,
         'path': version_path,
-        'model_path': os.path.join(version_path, 'model.keras'),
+        'model_path': os.path.join(version_path, model_file),
+        'model_type': model_type,
         'encoder_path': os.path.join(version_path, 'label_encoder.joblib'),
         'scaler_path': os.path.join(version_path, 'scaler.joblib'),
         'set_at': datetime.now().isoformat()
@@ -72,7 +93,7 @@ def set_active_model(version_name):
     with open(ACTIVE_MODEL_FILE, 'w') as f:
         json.dump(active_config, f, indent=2)
     
-    print(f"[OK] Active model set to: {version_name}")
+    print(f"[OK] Active model set to: {version_name} ({model_type.upper()})")
     return True
 
 def list_models():
@@ -104,117 +125,75 @@ def train_new_model():
     print("   TRAIN NEW MODEL")
     print("="*40)
     
-    # ask for architecture
-    print("\nSelect model architecture:")
-    print("  1. DNN (Dense Neural Network) - current default")
-    print("  2. Random Forest - often better for tabular data")
-    print("  3. XGBoost - gradient boosting, often best accuracy")
+    # 1. Extraction Phase
+    print("\n[STEP 1] Data Preparation")
+    print("Do you want to re-extract features? (Recommended if you added new images)")
+    print("  1. Yes, run extraction pipeline")
+    print("  2. No, use existing CSVs")
+    ext_choice = input("Choice [1]: ").strip()
     
-    arch_choice = input("\nEnter choice (1-3) [default=1]: ").strip()
-    
-    # common settings for all architectures
-    model_name = None
-    feature_mode = 'angles'
-    do_extraction = False
-    
-    # feature mode selection (for all architectures)
-    print("\nSelect feature mode:")
-    print("  1. Angles (33 features) - joint angles + positions")
-    print("  2. Coordinates (99 features) - raw landmark coordinates")
-    mode_choice = input("Enter choice (1 or 2) [default=1]: ").strip()
-    if mode_choice == '2':
-        feature_mode = 'coordinates'
-    
-    # set csv path based on feature mode
-    if feature_mode == 'coordinates':
-        csv_filename = 'arnis_poses_coordinates.csv'
-    else:
-        csv_filename = 'arnis_poses_angles.csv'
-    
-    csv_path = os.path.join(project_root, csv_filename)
-    
-    # check if CSV exists and ask about extraction
-    if os.path.exists(csv_path):
-        print(f"\n[INFO] Found existing CSV: {csv_filename}")
-        print("  1. Use existing CSV (skip extraction)")
-        print("  2. Re-extract features from images")
-        extract_choice = input("Enter choice (1 or 2) [default=1]: ").strip()
-        if extract_choice == '2':
-            do_extraction = True
-    else:
-        print(f"\n[INFO] CSV not found: {csv_filename}")
-        print("[INFO] Will extract features from images...")
-        do_extraction = True
-    
-    # model name (for RF and XGBoost)
-    if arch_choice in ['2', '3']:
-        print("\nEnter a name for this model (for organization):")
-        print("  Examples: 'test1', 'aug_data', 'final'")
-        model_name = input("Name (or press Enter to skip): ").strip()
-        if model_name:
-            model_name = model_name.replace(' ', '_').replace('-', '_')
-            model_name = ''.join(c for c in model_name if c.isalnum() or c == '_')
-    
-    # perform extraction if needed
-    if do_extraction:
-        from feature_extraction import extract_features_from_dataset
-        dataset_path = os.path.join(project_root, 'dataset_aug')
+    if ext_choice != '2':
+        print("\nSelect Feature Mode:")
+        print("  1. Angles (58 features) - Recommended")
+        print("  2. Coordinates (99 features)")
+        m_choice = input("Choice [1]: ").strip()
+        mode = 'coordinates' if m_choice == '2' else 'angles'
         
-        if not os.path.exists(dataset_path):
-            print(f"[ERROR] Dataset folder not found: {dataset_path}")
+        print(f"\n[INFO] Running extraction ({mode})...")
+        try:
+            subprocess.run([sys.executable, 'training/run_extraction.py', '--mode', mode], 
+                         cwd=project_root, check=True)
+        except subprocess.CalledProcessError:
+            print("\n[ERROR] Extraction failed. Aborting.")
+            input("Press Enter...")
             return
-        
-        extract_features_from_dataset(dataset_path, csv_path, feature_mode)
+
+    # 2. Training Phase
+    print("\n[STEP 2] Model Training")
+    print("Select Architecture:")
+    print("  1. Dense Neural Network (DNN)")
+    print("  2. Random Forest")
+    print("  3. XGBoost")
     
-    models_dir = os.path.join(project_root, 'models')
-    os.makedirs(models_dir, exist_ok=True)
+    arch = input("Choice [1]: ").strip()
     
-    if arch_choice == '2':
+    if arch == '2':
         # Random Forest
-        print(f"\n[INFO] Training Random Forest with {feature_mode.upper()} features...")
-        from training_alt import train_random_forest
-        
-        acc, version = train_random_forest(csv_path, models_dir, model_name)
-        if acc:
-            print(f"\n[OK] Random Forest training complete! Accuracy: {acc*100:.2f}%")
-        return
-        
-    elif arch_choice == '3':
+        try:
+            sys.path.append(current_dir) # ensure training_alt is importable
+            from training_alt import load_and_prepare_data, train_random_forest
+            print("\n[INFO] Loading data for Random Forest...")
+            data = load_and_prepare_data()
+            train_random_forest(data)
+        except SystemExit:
+            print("[INFO] Training aborted.")
+        except Exception as e:
+            print(f"[ERROR] Failed to run RF training: {e}")
+            
+    elif arch == '3':
         # XGBoost
-        print(f"\n[INFO] Training XGBoost with {feature_mode.upper()} features...")
-        from training_alt import train_xgboost, HAS_XGBOOST
-        
-        if not HAS_XGBOOST:
-            print("[ERROR] XGBoost not installed. Run: pip install xgboost")
-            return
-        
-        acc, version = train_xgboost(csv_path, models_dir, model_name)
-        if acc:
-            print(f"\n[OK] XGBoost training complete! Accuracy: {acc*100:.2f}%")
-        return
-    
-    # DNN training (default)
-    print(f"\n[INFO] Using DNN with {feature_mode.upper()} mode")
-    print("[INFO] Running training script...\n")
-    
-    import subprocess
-    training_script = os.path.join(current_dir, 'training.py')
-    
-    # set feature mode via environment variable
-    env = os.environ.copy()
-    env['FEATURE_MODE'] = feature_mode
-    
-    # run training.py as subprocess with mode
-    result = subprocess.run(
-        [sys.executable, training_script],
-        cwd=project_root,
-        env=env
-    )
-    
-    if result.returncode == 0:
-        print("\n[OK] Training completed successfully!")
+        try:
+            sys.path.append(current_dir)
+            from training_alt import load_and_prepare_data, train_xgboost
+            print("\n[INFO] Loading data for XGBoost...")
+            data = load_and_prepare_data()
+            train_xgboost(data)
+        except SystemExit:
+            print("[INFO] Training aborted.")
+        except Exception as e:
+            print(f"[ERROR] Failed to run XGB training: {e}")
+            
+    elif arch in ['1', '']:
+        # DNN
+        try:
+            subprocess.run([sys.executable, 'training/training.py'], 
+                         cwd=project_root, check=True)
+        except subprocess.CalledProcessError:
+            print("\n[ERROR] DNN Training failed.")
     else:
-        print(f"\n[ERROR] Training failed with code {result.returncode}")
+        print("[ERROR] Invalid selection")
+        
+    input("\nPress Enter to continue...")
 
 def generate_analysis():
     versions = get_all_model_versions()
