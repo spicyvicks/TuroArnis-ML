@@ -1,0 +1,9 @@
+{
+  "experiment_id": "pose_classifier_dnn_20260203_125748",
+  "experiment_name": "pose_classifier_dnn",
+  "description": "DNN Training on split dataset",
+  "created_at": "2026-02-03T12:57:48.955917",
+  "status": "completed",
+  "completed_at": "2026-02-03T13:22:37.993985",
+  "final_notes": "Test Accuracy: 24.81%"
+}
