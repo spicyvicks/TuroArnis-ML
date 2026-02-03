@@ -1,3 +1,7 @@
+"""
+Visualization generator for RF/XGBoost models
+Includes feature selection analysis plots
+"""
 import os
 import sys
 import json
@@ -14,45 +18,76 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
 
-def plot_gridsearch_results(cv_results, save_path, n_iter=None):
-    mean_scores = cv_results['mean_test_score']
-    std_scores = cv_results['std_test_score']
+def plot_feature_selection_analysis(feature_selection_data, save_path):
+    """Plot showing which features were kept vs dropped during feature selection"""
+    if not feature_selection_data:
+        return
     
-    fig, ax = plt.subplots(figsize=(12, 6))
+    # Sort by importance
+    sorted_data = sorted(feature_selection_data, key=lambda x: x['importance'], reverse=True)
     
-    x = np.arange(len(mean_scores))
-    ax.plot(x, mean_scores, 'b-o', label='Mean CV Score', markersize=4)
-    ax.fill_between(x, mean_scores - std_scores, mean_scores + std_scores, 
-                     alpha=0.2, color='b', label='±1 std')
+    features = [d['feature'] for d in sorted_data]
+    importances = [d['importance'] for d in sorted_data]
+    selected = [d['selected'] for d in sorted_data]
     
-    best_idx = np.argmax(mean_scores)
-    ax.plot(best_idx, mean_scores[best_idx], 'r*', markersize=15, label=f'Best ({mean_scores[best_idx]:.4f})')
+    # Create color array
+    colors = ['#2ecc71' if s else '#e74c3c' for s in selected]
     
-    ax.set_xlabel('Parameter Combination Index', fontsize=12)
-    ax.set_ylabel('CV Score (Accuracy)', fontsize=12)
-    title = f'{"Randomized" if n_iter else "Grid"} Search Cross-Validation Results'
-    ax.set_title(title, fontsize=14, fontweight='bold')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    fig, ax = plt.subplots(figsize=(14, max(8, len(features) * 0.25)))
+    
+    y_pos = np.arange(len(features))
+    bars = ax.barh(y_pos, importances, color=colors, edgecolor='white', linewidth=0.5)
+    
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(features, fontsize=8)
+    ax.invert_yaxis()
+    
+    ax.set_xlabel('Feature Importance', fontsize=12)
+    ax.set_title('Feature Selection Analysis\n(Green = Kept, Red = Dropped)', fontsize=14, fontweight='bold')
+    ax.grid(axis='x', alpha=0.3)
+    
+    # Add legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor='#2ecc71', label='Selected Features'),
+        Patch(facecolor='#e74c3c', label='Dropped Features')
+    ]
+    ax.legend(handles=legend_elements, loc='lower right')
+    
+    # Add count annotation
+    kept_count = sum(selected)
+    dropped_count = len(selected) - kept_count
+    ax.text(0.98, 0.02, f'Kept: {kept_count} | Dropped: {dropped_count}', 
+            transform=ax.transAxes, ha='right', va='bottom',
+            fontsize=10, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"[INFO] Saved: {os.path.basename(save_path)}")
 
-def plot_feature_importance(model, feature_names, save_path, top_n=20):
-    importances = model.feature_importances_
-    indices = np.argsort(importances)[::-1][:top_n]
+def plot_final_feature_importance(final_importance_data, save_path, top_n=20):
+    """Plot feature importances from the final trained model (after feature selection)"""
+    if not final_importance_data:
+        return
+    
+    # Sort by importance and take top N
+    sorted_data = sorted(final_importance_data, key=lambda x: x['importance'], reverse=True)[:top_n]
+    
+    features = [d['feature'] for d in sorted_data]
+    importances = [d['importance'] for d in sorted_data]
     
     plt.figure(figsize=(10, 8))
-    colors = plt.cm.viridis(np.linspace(0.3, 0.9, top_n))
+    colors = plt.cm.viridis(np.linspace(0.3, 0.9, len(features)))
     
-    plt.barh(range(top_n), importances[indices], color=colors)
-    plt.yticks(range(top_n), [feature_names[i] for i in indices])
+    y_pos = np.arange(len(features))
+    plt.barh(y_pos, importances, color=colors)
+    plt.yticks(y_pos, features)
+    plt.gca().invert_yaxis()
+    
     plt.xlabel('Importance', fontsize=12)
     plt.ylabel('Feature', fontsize=12)
-    plt.title(f'Top {top_n} Feature Importances', fontsize=14, fontweight='bold')
-    plt.gca().invert_yaxis()
+    plt.title(f'Top {len(features)} Feature Importances (Final Model)', fontsize=14, fontweight='bold')
     plt.grid(axis='x', alpha=0.3)
     
     plt.tight_layout()
@@ -78,44 +113,69 @@ def plot_confusion_matrix_heatmap(y_true, y_pred, class_names, save_path):
     plt.close()
     print(f"[INFO] Saved: {os.path.basename(save_path)}")
 
-def plot_parameter_importance(cv_results, param_grid, save_path):
-    results_df = pd.DataFrame(cv_results)
+def plot_class_accuracy(y_true, y_pred, class_names, save_path):
+    """Plot per-class accuracy as a bar chart"""
+    cm = confusion_matrix(y_true, y_pred)
     
-    # Analyze each parameter's impact
-    param_importance = {}
-    for param_name in param_grid.keys():
-        param_col = f'param_{param_name}'
-        if param_col in results_df.columns:
-            # Group by parameter value and get mean score variance
-            grouped = results_df.groupby(param_col)['mean_test_score']
-            variance = grouped.std().mean()
-            param_importance[param_name] = variance
+    # Calculate per-class accuracy
+    per_class_acc = cm.diagonal() / cm.sum(axis=1)
     
-    if not param_importance:
-        print("[WARN] No parameter importance data available")
-        return
+    # Sort by accuracy
+    sorted_indices = np.argsort(per_class_acc)
+    sorted_classes = [class_names[i] for i in sorted_indices]
+    sorted_acc = per_class_acc[sorted_indices]
     
-    # Sort and plot
-    params = list(param_importance.keys())
-    importances = [param_importance[p] for p in params]
+    plt.figure(figsize=(12, max(6, len(class_names) * 0.3)))
     
-    plt.figure(figsize=(10, 6))
-    colors = plt.cm.plasma(np.linspace(0.3, 0.9, len(params)))
-    plt.bar(params, importances, color=colors)
-    plt.xlabel('Hyperparameter', fontsize=12)
-    plt.ylabel('Score Variance (Impact)', fontsize=12)
-    plt.title('Hyperparameter Sensitivity Analysis', fontsize=14, fontweight='bold')
-    plt.xticks(rotation=45, ha='right')
-    plt.grid(axis='y', alpha=0.3)
+    # Color gradient based on accuracy
+    colors = plt.cm.RdYlGn(sorted_acc)
+    
+    y_pos = np.arange(len(sorted_classes))
+    bars = plt.barh(y_pos, sorted_acc * 100, color=colors, edgecolor='white')
+    
+    plt.yticks(y_pos, sorted_classes, fontsize=9)
+    plt.xlabel('Accuracy (%)', fontsize=12)
+    plt.title('Per-Class Accuracy', fontsize=14, fontweight='bold')
+    plt.xlim(0, 105)
+    plt.grid(axis='x', alpha=0.3)
+    
+    # Add accuracy labels
+    for i, (acc, bar) in enumerate(zip(sorted_acc, bars)):
+        plt.text(acc * 100 + 1, i, f'{acc*100:.1f}%', va='center', fontsize=8)
+    
+    # Add mean accuracy line
+    mean_acc = np.mean(per_class_acc) * 100
+    plt.axvline(x=mean_acc, color='blue', linestyle='--', linewidth=2, label=f'Mean: {mean_acc:.1f}%')
+    plt.legend(loc='lower right')
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"[INFO] Saved: {os.path.basename(save_path)}")
 
-def get_feature_names(csv_path):
-    df = pd.read_csv(csv_path, nrows=0)
-    return df.columns[1:].tolist()  # Skip 'class' column
+def plot_feature_correlation(X, feature_names, save_path, top_n=30):
+    """Plot correlation matrix of top features"""
+    if len(feature_names) > top_n:
+        feature_names = feature_names[:top_n]
+        X = X[:, :top_n]
+    
+    corr_matrix = np.corrcoef(X.T)
+    
+    plt.figure(figsize=(14, 12))
+    mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
+    
+    sns.heatmap(corr_matrix, mask=mask, annot=False, cmap='coolwarm', center=0,
+                xticklabels=feature_names, yticklabels=feature_names,
+                cbar_kws={'label': 'Correlation'}, vmin=-1, vmax=1)
+    
+    plt.title('Feature Correlation Matrix', fontsize=14, fontweight='bold')
+    plt.xticks(rotation=45, ha='right', fontsize=8)
+    plt.yticks(fontsize=8)
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"[INFO] Saved: {os.path.basename(save_path)}")
 
 def generate_visualizations_for_model(version_dir):
     print(f"\n{'='*60}")
@@ -138,10 +198,8 @@ def generate_visualizations_for_model(version_dir):
         print(f"[ERROR] Only Random Forest and XGBoost models supported (found: {model_type})")
         return False
     
-    # Map model type to correct filename suffix
-    model_suffix = 'rf' if model_type == 'random_forest' else 'xgb'
-    
     # Load model
+    model_suffix = 'rf' if model_type == 'random_forest' else 'xgb'
     model_path = os.path.join(version_dir, f'model_{model_suffix}.joblib')
     if not os.path.exists(model_path):
         print(f"[ERROR] Model file not found: {model_path}")
@@ -150,84 +208,113 @@ def generate_visualizations_for_model(version_dir):
     print("[INFO] Loading model...")
     model = joblib.load(model_path)
     
-    # Check if it's a grid search object
-    from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
-    if isinstance(model, (GridSearchCV, RandomizedSearchCV)):
-        grid_search = model
-        best_model = model.best_estimator_
-    else:
-        grid_search = None
-        best_model = model
-    
-    # Load label encoder and scaler
+    # Load label encoder
     encoder_path = os.path.join(version_dir, 'label_encoder.joblib')
-    scaler_path = os.path.join(version_dir, 'scaler.joblib')
-    
     label_encoder = joblib.load(encoder_path) if os.path.exists(encoder_path) else None
+    class_names = list(label_encoder.classes_) if label_encoder else metadata.get('class_names', [])
+    
+    # Load scaler
+    scaler_path = os.path.join(version_dir, 'scaler.joblib')
     scaler = joblib.load(scaler_path) if os.path.exists(scaler_path) else None
-    class_names = list(label_encoder.classes_) if label_encoder else None
     
-    # Load test data from CSV
-    csv_path = metadata.get('csv_path')
-    if not csv_path or not os.path.exists(csv_path):
-        print(f"[WARN] CSV not found, looking for default...")
-        csv_path = os.path.join(project_root, 'arnis_poses_angles.csv')
+    # Load feature selection data
+    feature_selection_path = os.path.join(version_dir, 'feature_selection_data.json')
+    feature_selection_data = None
+    if os.path.exists(feature_selection_path):
+        with open(feature_selection_path, 'r') as f:
+            feature_selection_data = json.load(f)
     
-    if not os.path.exists(csv_path):
-        print("[ERROR] Training CSV not found, cannot generate some plots")
-        feature_names = None
-        y_test, y_pred = None, None
-    else:
-        print(f"[INFO] Loading data from: {os.path.basename(csv_path)}")
-        data = pd.read_csv(csv_path).dropna()
-        
-        # Get feature names
-        feature_names = get_feature_names(csv_path)
-        
-        # Extract test data
-        from sklearn.model_selection import train_test_split
-        from sklearn.preprocessing import StandardScaler, LabelEncoder
-        
-        X = data.iloc[:, 1:].values
-        y_labels = data.iloc[:, 0].values
-        
-        le = LabelEncoder()
-        y = le.fit_transform(y_labels)
-        
-        # Reproduce same split (70/10/20)
-        X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-        
-        if scaler:
-            sc = StandardScaler()
-            sc.fit(X_temp)
-            X_test = sc.transform(X_test)
-        
-        # Get predictions
-        y_pred = best_model.predict(X_test)
+    # Load final importance data
+    final_importance_path = os.path.join(version_dir, 'final_importance_data.json')
+    final_importance_data = None
+    if os.path.exists(final_importance_path):
+        with open(final_importance_path, 'r') as f:
+            final_importance_data = json.load(f)
+    
+    # Load selected features
+    selected_features_path = os.path.join(version_dir, 'selected_features.json')
+    selected_features = None
+    if os.path.exists(selected_features_path):
+        with open(selected_features_path, 'r') as f:
+            selected_features = json.load(f)
     
     # Generate plots
     print("\n[INFO] Generating visualizations...")
     
-    # 1. GridSearch Results (if available)
-    if grid_search is not None:
-        cv_results = grid_search.cv_results_
-        n_iter = metadata.get('n_iter') if 'n_iter' in metadata else None
-        plot_gridsearch_results(cv_results, os.path.join(version_dir, 'gridsearch_results.png'), n_iter)
+    # 1. Feature Selection Analysis (if available)
+    if feature_selection_data:
+        plot_feature_selection_analysis(
+            feature_selection_data, 
+            os.path.join(version_dir, 'feature_selection_analysis.png')
+        )
+    
+    # 2. Final Feature Importance (if available)
+    if final_importance_data:
+        plot_final_feature_importance(
+            final_importance_data,
+            os.path.join(version_dir, 'feature_importance.png')
+        )
+    
+    # 3. Load test data for confusion matrix
+    test_csv = os.path.join(project_root, 'features_test.csv')
+    if os.path.exists(test_csv):
+        print("[INFO] Loading test data...")
+        test_df = pd.read_csv(test_csv).dropna()
         
-        # 4. Parameter Importance
-        param_grid = metadata.get('param_grid', {})
-        if param_grid:
-            plot_parameter_importance(cv_results, param_grid, os.path.join(version_dir, 'param_importance.png'))
+        # Filter to known classes
+        test_df = test_df[test_df['class'].isin(class_names)]
+        
+        X_test = test_df.drop('class', axis=1).values
+        y_test_labels = test_df['class'].values
+        
+        # Encode labels
+        y_test = label_encoder.transform(y_test_labels)
+        
+        # Get feature names from CSV
+        feature_names = [col for col in test_df.columns if col != 'class']
+        
+        # Apply scaler if available
+        if scaler:
+            X_test = scaler.transform(X_test)
+        
+        # Apply feature selection if used
+        if selected_features:
+            # Get indices of selected features
+            selected_indices = [feature_names.index(f) for f in selected_features if f in feature_names]
+            X_test = X_test[:, selected_indices]
+        
+        # Get predictions
+        y_pred = model.predict(X_test)
+        
+        # Plot confusion matrix
+        plot_confusion_matrix_heatmap(
+            y_test, y_pred, class_names,
+            os.path.join(version_dir, 'confusion_matrix.png')
+        )
+        
+        # Plot per-class accuracy
+        plot_class_accuracy(
+            y_test, y_pred, class_names,
+            os.path.join(version_dir, 'per_class_accuracy.png')
+        )
+        
+        # Plot feature correlation (on selected features)
+        if selected_features and len(selected_features) <= 40:
+            plot_feature_correlation(
+                X_test, selected_features if selected_features else feature_names,
+                os.path.join(version_dir, 'feature_correlation.png')
+            )
+        
+        # Generate classification report
+        report = classification_report(y_test, y_pred, target_names=class_names)
+        report_path = os.path.join(version_dir, 'classification_report.txt')
+        with open(report_path, 'w') as f:
+            f.write(f"Classification Report for {metadata['version']}\n")
+            f.write(f"{'='*60}\n\n")
+            f.write(report)
+        print(f"[INFO] Saved: classification_report.txt")
     else:
-        print("[WARN] Model is not a GridSearch object, skipping CV plots")
-    
-    # 2. Feature Importance
-    if feature_names is not None:
-        plot_feature_importance(best_model, feature_names, os.path.join(version_dir, 'feature_importance.png'))
-    
-    # 3. Confusion Matrix
-    if y_test is not None and y_pred is not None and class_names is not None:
-        plot_confusion_matrix_heatmap(y_test, y_pred, class_names, os.path.join(version_dir, 'confusion_matrix.png'))
+        print(f"[WARN] Test CSV not found: {test_csv}")
     
     print(f"\n{'='*60}")
     print("  VISUALIZATION GENERATION COMPLETE")
@@ -238,7 +325,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Generate visualizations for trained RF/XGBoost models')
-    parser.add_argument('--version', '-v', type=str, help='Model version directory name (e.g., v018_ang3_rf)')
+    parser.add_argument('--version', '-v', type=str, help='Model version directory name')
     parser.add_argument('--all', '-a', action='store_true', help='Generate for all RF/XGBoost models')
     
     args = parser.parse_args()
@@ -246,7 +333,6 @@ def main():
     models_dir = os.path.join(project_root, 'models')
     
     if args.all:
-        # Generate for all models
         versions = [d for d in os.listdir(models_dir) 
                    if os.path.isdir(os.path.join(models_dir, d)) and d.startswith('v')]
         

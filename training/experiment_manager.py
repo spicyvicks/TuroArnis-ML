@@ -64,8 +64,8 @@ class CustomExperimentManager:
         self._save_info()
         
         print(f"\n{'='*60}")
-        print(f"🧪 Experiment Started: {self.experiment_id}")
-        print(f"📁 Location: {self.experiment_dir}")
+        print(f"[EXPERIMENT] Started: {self.experiment_id}")
+        print(f"[LOCATION] {self.experiment_dir}")
         print(f"{'='*60}\n")
         
     def log_config(self, config):
@@ -78,7 +78,7 @@ class CustomExperimentManager:
         config_path = os.path.join(self.experiment_dir, "config.yaml")
         with open(config_path, 'w') as f:
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-        print(f"✅ Config saved: config.yaml")
+        print(f"[OK] Config saved: config.yaml")
         
     def log_metrics(self, epoch=None, **metrics):
         """
@@ -107,7 +107,7 @@ class CustomExperimentManager:
         # Print summary
         metrics_str = ", ".join([f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}" 
                                  for k, v in metrics.items()])
-        print(f"📊 Metrics logged: {metrics_str}")
+        # silent logging to reduce console spam
         
     def save_model(self, source_path, name=None):
         """
@@ -118,13 +118,13 @@ class CustomExperimentManager:
             name: Optional new name (default: keeps original name)
         """
         if not os.path.exists(source_path):
-            print(f"⚠️  Model not found: {source_path}")
+            print(f"[WARN] Model not found: {source_path}")
             return
             
         dest_name = name if name else os.path.basename(source_path)
         dest_path = os.path.join(self.experiment_dir, "models", dest_name)
         shutil.copy2(source_path, dest_path)
-        print(f"💾 Model saved: models/{dest_name}")
+        print(f"[SAVED] Model: models/{dest_name}")
         
     def save_artifact(self, source_path, subfolder=None):
         """
@@ -135,7 +135,7 @@ class CustomExperimentManager:
             subfolder: Optional subfolder ("plots", "logs", etc.)
         """
         if not os.path.exists(source_path):
-            print(f"⚠️  File not found: {source_path}")
+            print(f"[WARN] File not found: {source_path}")
             return
             
         if subfolder:
@@ -148,7 +148,7 @@ class CustomExperimentManager:
         shutil.copy2(source_path, dest_path)
         
         relative_path = os.path.relpath(dest_path, self.experiment_dir)
-        print(f"📎 Artifact saved: {relative_path}")
+        print(f"[SAVED] Artifact: {relative_path}")
         
     def add_note(self, note):
         """Add text note to experiment log"""
@@ -156,7 +156,7 @@ class CustomExperimentManager:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(log_path, 'a') as f:
             f.write(f"[{timestamp}] {note}\n")
-        print(f"📝 Note added")
+        print(f"[OK] Note added")
         
     def finalize(self, status="completed", notes=None):
         """
@@ -173,9 +173,9 @@ class CustomExperimentManager:
         self._save_info()
         
         print(f"\n{'='*60}")
-        print(f"✅ Experiment {status.upper()}: {self.experiment_id}")
+        print(f"[DONE] Experiment {status.upper()}: {self.experiment_id}")
         if notes:
-            print(f"📝 Notes: {notes}")
+            print(f"[NOTES] {notes}")
         print(f"{'='*60}\n")
         
     def _save_info(self):
@@ -234,7 +234,7 @@ class ExperimentComparator:
             desc = info.get("description", "No description")
             created = info.get("created_at", "unknown")[:19].replace("T", " ")
             
-            status_icon = "✅" if status == "completed" else "❌" if status == "failed" else "🔄"
+            status_icon = "[OK]" if status == "completed" else "[X]" if status == "failed" else "[...]"
             
             print(f"\n{status_icon} {folder_name}")
             print(f"   Status: {status}")
@@ -264,7 +264,7 @@ class ExperimentComparator:
             experiment_ids: List of experiment folder names
             metric_name: Name of metric to compare (e.g., "val_accuracy")
         """
-        print(f"\n📊 Comparing: {metric_name}")
+        print(f"\n[COMPARE] {metric_name}")
         print("="*60)
         
         results = []
@@ -389,31 +389,31 @@ if __name__ == "__main__":
     print("\n" + "="*60)
     print("Custom Experiment Tracking System")
     print("="*60)
-    print("\n📦 Dependencies:")
+    print("\n[Dependencies]")
     print("   - No external packages needed!")
     print("   - Uses built-in Python libraries only")
-    print("\n📁 Folder Structure:")
+    print("\n[Folder Structure]")
     print("   experiments/")
     print("     pose_classifier_20260112_143022/")
-    print("       ├── experiment_info.json")
-    print("       ├── config.yaml")
-    print("       ├── metrics.csv")
-    print("       ├── notes.txt")
-    print("       ├── models/")
-    print("       │   └── final_model.keras")
-    print("       ├── plots/")
-    print("       │   ├── training_history.png")
-    print("       │   └── confusion_matrix.png")
-    print("       └── logs/")
-    print("\n📊 Features:")
+    print("       - experiment_info.json")
+    print("       - config.yaml")
+    print("       - metrics.csv")
+    print("       - notes.txt")
+    print("       - models/")
+    print("       -   final_model.keras")
+    print("       - plots/")
+    print("       -   training_history.png")
+    print("       -   confusion_matrix.png")
+    print("       - logs/")
+    print("\n[Features]")
     print("   - Simple CSV metrics tracking")
     print("   - YAML config files")
     print("   - Timestamped folders")
     print("   - Easy to backup and share")
-    print("\n🚀 Usage:")
+    print("\n[Usage]")
     print("   python example_pose_classifier_training()")
     print("   python example_stick_detector_training()")
-    print("\n📋 View Experiments:")
+    print("\n[View Experiments]")
     print("   comparator = ExperimentComparator()")
     print("   comparator.print_summary('pose_classifier')")
     print("="*60)

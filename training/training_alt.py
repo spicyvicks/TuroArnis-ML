@@ -1,7 +1,7 @@
 """
 Random Forest and XGBoost training for pose classification
 Alternative architectures to DNN.
-Consumes: features_train.csv, features_val.csv, features_test.csv
+Consumes: features_train.csv, features_test.csv (validation omitted)
 """
 import os
 import sys
@@ -72,15 +72,17 @@ def get_next_version(models_dir):
     return max(versions) + 1 if versions else 1
 
 def load_and_prepare_data():
-    """Load data from the 3 CSVs and prepare X, y"""
+    """Load data from train and test CSVs (validation omitted for RF/XGB)"""
     print("  Loading CSVs...")
     if not os.path.exists(csv_train_file):
         print(f"[ERROR] Missing {csv_train_file}. Run run_extraction.py first.")
         sys.exit(1)
         
     train = pd.read_csv(csv_train_file).dropna()
-    val = pd.read_csv(csv_val_file).dropna()
     test = pd.read_csv(csv_test_file).dropna()
+    
+    # Get feature names (all columns except 'class')
+    feature_names = [col for col in train.columns if col != 'class']
     
     # Fit encoder on training classes
     le = LabelEncoder()
@@ -94,47 +96,97 @@ def load_and_prepare_data():
         return X, y
         
     X_train, y_train = prep(train)
-    X_val, y_val = prep(val)
     X_test, y_test = prep(test)
     
-    print(f"  Train: {len(X_train)} | Val: {len(X_val)} | Test: {len(X_test)}")
+    print(f"  Train: {len(X_train)} | Test: {len(X_test)} | Features: {len(feature_names)}")
     
     # Scale
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
-    X_val = scaler.transform(X_val)
     X_test = scaler.transform(X_test)
     
-    return (X_train, y_train), (X_val, y_val), (X_test, y_test), scaler, le, class_names
+    return (X_train, y_train), (X_test, y_test), scaler, le, class_names, feature_names
 
-def train_random_forest(data_pack):
-    (X_train, y_train), (X_val, y_val), (X_test, y_test), scaler, le, class_names = data_pack
+def select_features(X_train, y_train, X_test, feature_names, keep_ratio=0.6):
+    """Auto-select top features using RF importance. Returns reduced X and selected feature info."""
+    print("\n  [STEP 1] AUTO-FEATURE SELECTION")
+    print(f"  Original features: {len(feature_names)}")
+    
+    # Quick RF to get importances
+    quick_rf = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1)
+    quick_rf.fit(X_train, y_train)
+    
+    importances = quick_rf.feature_importances_
+    n_keep = max(10, int(len(feature_names) * keep_ratio))  # Keep at least 10 features
+    
+    # Get indices of top features
+    top_indices = np.argsort(importances)[::-1][:n_keep]
+    top_indices_sorted = np.sort(top_indices)  # Keep original order for consistency
+    
+    # Select features
+    X_train_sel = X_train[:, top_indices_sorted]
+    X_test_sel = X_test[:, top_indices_sorted]
+    selected_names = [feature_names[i] for i in top_indices_sorted]
+    
+    # Build importance ranking for all features (for visualization)
+    all_importance_data = []
+    for i, (name, imp) in enumerate(zip(feature_names, importances)):
+        all_importance_data.append({
+            'feature': name,
+            'importance': float(imp),
+            'selected': i in top_indices_sorted,
+            'rank': int(np.where(np.argsort(importances)[::-1] == i)[0][0]) + 1
+        })
+    
+    # Show dropped features
+    dropped_count = len(feature_names) - n_keep
+    print(f"  Kept: {n_keep} | Dropped: {dropped_count} (bottom {100-int(keep_ratio*100)}%)")
+    
+    # Show top 5 kept and bottom 5 dropped
+    sorted_by_imp = sorted(all_importance_data, key=lambda x: x['importance'], reverse=True)
+    print("  Top 5 kept:")
+    for f in sorted_by_imp[:5]:
+        print(f"    - {f['feature']}: {f['importance']:.4f}")
+    print("  Bottom 5 dropped:")
+    for f in sorted_by_imp[-5:]:
+        if not f['selected']:
+            print(f"    - {f['feature']}: {f['importance']:.4f}")
+    
+    return X_train_sel, X_test_sel, selected_names, all_importance_data
+
+def train_random_forest(data_pack, use_feature_selection=True, keep_ratio=0.6):
+    (X_train, y_train), (X_test, y_test), scaler, le, class_names, feature_names = data_pack
     
     print("\n" + "="*50)
     print("  RANDOM FOREST TRAINING")
     print("="*50)
     
-    # GridSearch needs a single training set, usually we combine Train+Val for CV, or just use Train
-    # Here we will use Train + Val for the GridSearch to maximize data
-    X_full = np.vstack([X_train, X_val])
-    y_full = np.hstack([y_train, y_val])
+    # Feature Selection Step
+    all_importance_data = None
+    selected_feature_names = feature_names
+    if use_feature_selection and len(feature_names) > 15:
+        X_train, X_test, selected_feature_names, all_importance_data = select_features(
+            X_train, y_train, X_test, feature_names, keep_ratio
+        )
+    
+    print(f"\n  [STEP 2] GRID SEARCH (on {len(selected_feature_names)} features)")
     
     from sklearn.model_selection import GridSearchCV
     
     rf_base = RandomForestClassifier(random_state=42, n_jobs=-1, class_weight='balanced')
     
     param_grid = {
-        'n_estimators': [100, 150, 200],      # Reduced for speed/generalization
-        'max_depth': [8, 10, 12],             # Tighter depth to prevent overfitting
-        'min_samples_split': [5, 10],         # Require more samples to split (regularization)
-        'min_samples_leaf': [2, 4]            # Require more samples in leaf
+        'n_estimators': [100, 150, 200],
+        'max_depth': [8, 10, 12],
+        'min_samples_split': [5, 10],
+        'min_samples_leaf': [2, 4]
     }
     
     n_combinations = np.prod([len(v) for v in param_grid.values()])
     cv_folds = 3
     total_fits = n_combinations * cv_folds
     
-    print(f"\n  Grid Search: {total_fits} fits...")
+    print(f"  Grid Search: {total_fits} fits...")
     
     global _progress_tracker
     _progress_tracker = GridSearchProgress(total_fits, desc="RF Grid Search")
@@ -145,7 +197,7 @@ def train_random_forest(data_pack):
     )
     
     try:
-        grid_search.fit(X_full, y_full)
+        grid_search.fit(X_train, y_train)
     finally:
         _progress_tracker.close()
         _progress_tracker = None
@@ -159,31 +211,45 @@ def train_random_forest(data_pack):
     test_acc = accuracy_score(y_test, model.predict(X_test))
     print(f"  Test Acc:    {test_acc:.2%}")
     
-    # Feature Importance (Action 3)
+    # Show top 10 features from final model
     if hasattr(model, 'feature_importances_'):
         importances = model.feature_importances_
-        # map back to feature names (assume scaler doesn't change order, which is true)
-        # We need feature names. They are not in data_pack. 
-        # But we know them from run_extraction logic or we can just print indices.
-        # Ideally passing feature_names would be better, but for now we list top indices.
         indices = np.argsort(importances)[::-1]
-        print("\n  Top 10 Features:")
-        for f in range(10):
-            if f < len(indices):
-                print(f"    {f+1}. Feature #{indices[f]}: {importances[indices[f]]:.4f}")
+        print("\n  Top 10 Features (final model):")
+        for f in range(min(10, len(indices))):
+            print(f"    {f+1}. {selected_feature_names[indices[f]]}: {importances[indices[f]]:.4f}")
     
-    save_model(model, scaler, le, class_names, test_acc, 'random_forest', grid_search.best_params_)
+    # Build final importance data for selected features
+    final_importance_data = []
+    for i, name in enumerate(selected_feature_names):
+        final_importance_data.append({
+            'feature': name,
+            'importance': float(model.feature_importances_[i])
+        })
+    
+    save_model(
+        model, scaler, le, class_names, test_acc, 'random_forest', 
+        grid_search.best_params_, selected_feature_names,
+        all_importance_data, final_importance_data
+    )
 
-def train_xgboost(data_pack):
+def train_xgboost(data_pack, use_feature_selection=True, keep_ratio=0.6):
     if not HAS_XGBOOST: return
-    (X_train, y_train), (X_val, y_val), (X_test, y_test), scaler, le, class_names = data_pack
+    (X_train, y_train), (X_test, y_test), scaler, le, class_names, feature_names = data_pack
 
     print("\n" + "="*50)
     print("  XGBOOST TRAINING")
     print("="*50)
     
-    X_full = np.vstack([X_train, X_val])
-    y_full = np.hstack([y_train, y_val])
+    # Feature Selection Step
+    all_importance_data = None
+    selected_feature_names = feature_names
+    if use_feature_selection and len(feature_names) > 15:
+        X_train, X_test, selected_feature_names, all_importance_data = select_features(
+            X_train, y_train, X_test, feature_names, keep_ratio
+        )
+    
+    print(f"\n  [STEP 2] RANDOM SEARCH (on {len(selected_feature_names)} features)")
     
     from sklearn.model_selection import RandomizedSearchCV
     
@@ -191,18 +257,18 @@ def train_xgboost(data_pack):
                                  random_state=42, n_jobs=1, verbosity=0, use_label_encoder=False)
     
     param_grid = {
-        'n_estimators': [100, 150, 200],          # Reduced
-        'max_depth': [3, 4, 5],                   # Keep shallow
-        'learning_rate': [0.05, 0.1, 0.2],        # Slightly more aggressive learning
+        'n_estimators': [100, 150, 200],
+        'max_depth': [3, 4, 5],
+        'learning_rate': [0.05, 0.1, 0.2],
         'subsample': [0.8, 0.9, 1.0],
         'colsample_bytree': [0.6, 0.7, 0.8]
     }
     
-    n_iter = 5                           # Drastically reduced to prevent crashing
+    n_iter = 10
     cv_folds = 3
     total_fits = n_iter * cv_folds
     
-    print(f"\n  Random Search: {total_fits} fits...")
+    print(f"  Random Search: {total_fits} fits...")
     
     global _progress_tracker
     _progress_tracker = GridSearchProgress(total_fits, desc="XGB Search")
@@ -213,7 +279,7 @@ def train_xgboost(data_pack):
     )
     
     try:
-        search.fit(X_full, y_full)
+        search.fit(X_train, y_train)
     finally:
         _progress_tracker.close()
         _progress_tracker = None
@@ -225,21 +291,33 @@ def train_xgboost(data_pack):
     test_acc = accuracy_score(y_test, model.predict(X_test))
     print(f"  Test Acc:    {test_acc:.2%}")
     
-    # Feature Importance (Action 3)
+    # Show top 10 features from final model
     if hasattr(model, 'feature_importances_'):
         importances = model.feature_importances_
         indices = np.argsort(importances)[::-1]
-        print("\n  Top 10 Features:")
-        for f in range(10):
-            if f < len(indices):
-                print(f"    {f+1}. Feature #{indices[f]}: {importances[indices[f]]:.4f}")
+        print("\n  Top 10 Features (final model):")
+        for f in range(min(10, len(indices))):
+            print(f"    {f+1}. {selected_feature_names[indices[f]]}: {importances[indices[f]]:.4f}")
     
-    save_model(model, scaler, le, class_names, test_acc, 'xgboost', search.best_params_)
+    # Build final importance data for selected features
+    final_importance_data = []
+    for i, name in enumerate(selected_feature_names):
+        final_importance_data.append({
+            'feature': name,
+            'importance': float(model.feature_importances_[i])
+        })
+    
+    save_model(
+        model, scaler, le, class_names, test_acc, 'xgboost', 
+        search.best_params_, selected_feature_names,
+        all_importance_data, final_importance_data
+    )
 
-def save_model(model, scaler, le, class_names, test_acc, model_type, params):
+def save_model(model, scaler, le, class_names, test_acc, model_type, params,
+               selected_features=None, feature_selection_data=None, final_importance_data=None):
     version_num = get_next_version(models_dir)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    version_name = f"v{version_num:03d}_{timestamp}_{model_type}" # e.g. v005_20240101_random_forest
+    version_name = f"v{version_num:03d}_{timestamp}_{model_type}"
     version_dir = os.path.join(models_dir, version_name)
     os.makedirs(version_dir, exist_ok=True)
     
@@ -252,13 +330,30 @@ def save_model(model, scaler, le, class_names, test_acc, model_type, params):
     joblib.dump(le, encoder_path)
     joblib.dump(scaler, scaler_path)
     
+    # Save selected feature indices for inference
+    if selected_features:
+        with open(os.path.join(version_dir, 'selected_features.json'), 'w') as f:
+            json.dump(selected_features, f, indent=2)
+    
+    # Save feature selection data for visualization
+    if feature_selection_data:
+        with open(os.path.join(version_dir, 'feature_selection_data.json'), 'w') as f:
+            json.dump(feature_selection_data, f, indent=2)
+    
+    # Save final importance data for visualization
+    if final_importance_data:
+        with open(os.path.join(version_dir, 'final_importance_data.json'), 'w') as f:
+            json.dump(final_importance_data, f, indent=2)
+    
     metadata = {
         'version': version_name,
         'model_type': model_type,
         'trained_at': datetime.now().isoformat(),
         'test_accuracy': float(test_acc),
         'hyperparameters': params,
-        'class_names': class_names
+        'class_names': class_names,
+        'num_features': len(selected_features) if selected_features else None,
+        'feature_selection_used': feature_selection_data is not None
     }
     with open(os.path.join(version_dir, 'metadata.json'), 'w') as f:
         json.dump(metadata, f, indent=2)
@@ -282,6 +377,7 @@ def save_model(model, scaler, le, class_names, test_acc, model_type, params):
             'model_type': model_type,
             'encoder_path': encoder_path,
             'scaler_path': scaler_path,
+            'selected_features_path': os.path.join(version_dir, 'selected_features.json') if selected_features else None,
             'test_accuracy': float(test_acc),
             'set_at': datetime.now().isoformat()
         }

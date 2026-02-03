@@ -13,6 +13,7 @@ import joblib
 import tensorflow as tf
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.model_selection import train_test_split
 from experiment_manager import CustomExperimentManager
 
 # paths
@@ -105,7 +106,7 @@ if __name__ == "__main__":
 
     print("[INFO] Loading pre-split datasets...")
     train_data = pd.read_csv(csv_train_file).dropna()
-    val_data = pd.read_csv(csv_val_file).dropna()
+    val_data = pd.read_csv(csv_val_file).dropna() if os.path.exists(csv_val_file) else pd.DataFrame()
     test_data = pd.read_csv(csv_test_file).dropna()
     
     if train_data.empty:
@@ -128,8 +129,16 @@ if __name__ == "__main__":
         return X, y
 
     X_train, y_train = prepare_split(train_data, 'Train')
-    X_val, y_val = prepare_split(val_data, 'Val')
     X_test, y_test = prepare_split(test_data, 'Test')
+    
+    # Handle empty validation set - split from training data
+    if val_data.empty or len(val_data) == 0:
+        print("[INFO] No validation data found. Splitting 15% from training data...")
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_train, y_train, test_size=0.15, random_state=42, stratify=y_train
+        )
+    else:
+        X_val, y_val = prepare_split(val_data, 'Val')
 
     num_features = X_train.shape[1]
     print(f"  - Features: {num_features}")

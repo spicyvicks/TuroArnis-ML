@@ -1,0 +1,7 @@
+model_architecture: Dense Neural Network
+input_features: 58
+classes: 12
+train_samples: 6957
+learning_rate: 0.001
+epochs: 500
+batch_size: 16
