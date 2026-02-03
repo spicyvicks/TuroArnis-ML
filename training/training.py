@@ -22,7 +22,6 @@ project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
 
 csv_train_file = os.path.join(project_root, 'features_train.csv')
-csv_val_file = os.path.join(project_root, 'features_val.csv')
 csv_test_file = os.path.join(project_root, 'features_test.csv')
 models_dir = os.path.join(project_root, 'models')
 
@@ -98,15 +97,14 @@ if __name__ == "__main__":
     print("="*50)
 
     # 1. Check Data
-    for csv_file in [csv_train_file, csv_val_file, csv_test_file]:
+    for csv_file in [csv_train_file, csv_test_file]:
         if not os.path.exists(csv_file):
             print(f"[ERROR] CSV file not found: {csv_file}")
             print("Run 'python training/run_extraction.py' first.")
             sys.exit(1)
 
-    print("[INFO] Loading pre-split datasets...")
+    print("[INFO] Loading datasets...")
     train_data = pd.read_csv(csv_train_file).dropna()
-    val_data = pd.read_csv(csv_val_file).dropna() if os.path.exists(csv_val_file) else pd.DataFrame()
     test_data = pd.read_csv(csv_test_file).dropna()
     
     if train_data.empty:
@@ -131,14 +129,11 @@ if __name__ == "__main__":
     X_train, y_train = prepare_split(train_data, 'Train')
     X_test, y_test = prepare_split(test_data, 'Test')
     
-    # Handle empty validation set - split from training data
-    if val_data.empty or len(val_data) == 0:
-        print("[INFO] No validation data found. Splitting 15% from training data...")
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_train, y_train, test_size=0.15, random_state=42, stratify=y_train
-        )
-    else:
-        X_val, y_val = prepare_split(val_data, 'Val')
+    # Auto-split validation from training data (Keras needs validation for callbacks)
+    print("[INFO] Splitting 15% from training data for validation (Keras callbacks)...")
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_train, y_train, test_size=0.15, random_state=42, stratify=y_train
+    )
 
     num_features = X_train.shape[1]
     print(f"  - Features: {num_features}")

@@ -8,16 +8,16 @@ from tqdm import tqdm
 # configuration - augment ONLY the training set (prevents data leakage)
 INPUT_DATASET_FOLDER = "dataset_split/train"  # only train set
 OUTPUT_DATASET_FOLDER = "dataset_split/train_aug"  # augmented train output
-IMAGES_PER_ORIGINAL = 15
+IMAGES_PER_ORIGINAL = 8  # Reduced from 15 to prevent overfitting
 
 def get_pose_augmentation_pipeline():
     """
     pose-specific augmentation pipeline
     designed to maintain body structure while adding variety
+    NOTE: Removed HorizontalFlip because it changes semantics (left vs right)
     """
     return A.Compose([
-        # spatial transforms (preserve pose structure)
-        A.HorizontalFlip(p=0.5),
+        # removed HorizontalFlip to preserve side-specific classes
         
         A.OneOf([
             A.Affine(

@@ -52,22 +52,23 @@ Contains improper form, sloppy execution, and mistakes.
 We use a strict **Split-First, Augment-Second** pipeline to ensure the model is never tested on data it has seen during training.
 
 ### Step 1: Split (`training/split_dataset.py`)
-Randomly divides the raw `dataset/` folder into three isolated buckets:
-*   **Train (70%)**: The only data the model learns from.
-*   **Val (10%)**: Used during training to tune hyperparameters (stop early if not improving).
+Randomly divides the raw `dataset/` folder into two isolated buckets:
+*   **Train (80%)**: The only data the model learns from.
 *   **Test (20%)**: The "Final Exam". **NEVER** accessed during training.
+
+*Note: Validation is handled via k-fold cross-validation during hyperparameter tuning (RF/XGB), not a separate split.*
 
 ### Step 2: Augment (`training/data_augmentation.py`)
 Applies rotation, scaling, and lighting changes **ONLY** to the `Train` bucket. 
 *   **Input**: `dataset_split/train`
 *   **Output**: `dataset_split/train_aug`
-*   *Note: Valid and Test sets remain pure/clean to represent real-world camera input.*
+*   *Note: Test set remains pure/clean to represent real-world camera input.*
 
-### Step 3: Train (`training/training.py`)
-Trains the model (Neural Network, Random Forest, or XGBoost) using the isolated buckets.
+### Step 3: Train (`training/training_alt.py`)
+Trains the model (Random Forest or XGBoost) using the isolated buckets with cross-validation.
 *   Trains on: `dataset_split/train_aug`
-*   Validates on: `dataset_split/val`
 *   Tests on: `dataset_split/test`
+*   Uses: 5-fold cross-validation for hyperparameter tuning
 
 ---
 

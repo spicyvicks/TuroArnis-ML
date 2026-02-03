@@ -1,7 +1,8 @@
 """
 Feature extraction pipeline for TuroArnis ML
-Extracts features from pre-split datasets and saves to CSVs
+Extracts features from train/test splits and saves to CSVs
 Run this after split_dataset.py and data_augmentation.py
+Note: No validation set - RF/XGB use cross-validation internally
 """
 import os
 import sys
@@ -14,18 +15,17 @@ from feature_extraction import extract_features_from_dataset
 
 # paths
 TRAIN_FOLDER = os.path.join(project_root, 'dataset_split', 'train_aug')
-VAL_FOLDER = os.path.join(project_root, 'dataset_split', 'val')
 TEST_FOLDER = os.path.join(project_root, 'dataset_split', 'test')
 
 CSV_TRAIN = os.path.join(project_root, 'features_train.csv')
-CSV_VAL = os.path.join(project_root, 'features_val.csv')
 CSV_TEST = os.path.join(project_root, 'features_test.csv')
 
 
 def run_extraction(feature_mode='angles'):
     """
-    extract features from train_aug, val, and test folders
-    saves to features_train.csv, features_val.csv, features_test.csv
+    extract features from train_aug and test folders
+    saves to features_train.csv and features_test.csv
+    note: no validation set - RF/XGB use cross-validation internally
     """
     print("\n" + "="*60)
     print("  FEATURE EXTRACTION PIPELINE")
@@ -36,7 +36,6 @@ def run_extraction(feature_mode='angles'):
     # check folders exist
     folders = [
         ("Train (augmented)", TRAIN_FOLDER),
-        ("Validation", VAL_FOLDER),
         ("Test", TEST_FOLDER)
     ]
     
@@ -56,15 +55,11 @@ def run_extraction(feature_mode='angles'):
     # extract from each folder
     results = {}
     
-    print("\n[1/3] Extracting from TRAIN set (augmented)...")
+    print("\n[1/2] Extracting from TRAIN set (augmented)...")
     df_train = extract_features_from_dataset(TRAIN_FOLDER, CSV_TRAIN, feature_mode)
     results['train'] = len(df_train)
     
-    print("\n[2/3] Extracting from VALIDATION set (clean)...")
-    df_val = extract_features_from_dataset(VAL_FOLDER, CSV_VAL, feature_mode)
-    results['val'] = len(df_val)
-    
-    print("\n[3/3] Extracting from TEST set (clean)...")
+    print("\n[2/2] Extracting from TEST set (clean)...")
     df_test = extract_features_from_dataset(TEST_FOLDER, CSV_TEST, feature_mode)
     results['test'] = len(df_test)
     
@@ -73,13 +68,11 @@ def run_extraction(feature_mode='angles'):
     print("  EXTRACTION COMPLETE")
     print("="*60)
     print(f"  Train samples: {results['train']:,}")
-    print(f"  Val samples:   {results['val']:,}")
     print(f"  Test samples:  {results['test']:,}")
     print(f"  Total:         {sum(results.values()):,}")
     print("="*60)
     print("\n  Output files:")
     print(f"    {CSV_TRAIN}")
-    print(f"    {CSV_VAL}")
     print(f"    {CSV_TEST}")
     print("\n[NEXT] Run training:")
     print("  python training/training.py      (DNN)")

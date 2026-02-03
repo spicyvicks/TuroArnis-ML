@@ -55,7 +55,6 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 
 csv_train_file = os.path.join(project_root, 'features_train.csv')
-csv_val_file = os.path.join(project_root, 'features_val.csv')
 csv_test_file = os.path.join(project_root, 'features_test.csv')
 models_dir = os.path.join(project_root, 'models')
 
@@ -169,31 +168,34 @@ def train_random_forest(data_pack, use_feature_selection=True, keep_ratio=0.6):
             X_train, y_train, X_test, feature_names, keep_ratio
         )
     
-    print(f"\n  [STEP 2] GRID SEARCH (on {len(selected_feature_names)} features)")
+    print(f"\n  [STEP 2] GRID/RANDOM SEARCH (on {len(selected_feature_names)} features)")
     
-    from sklearn.model_selection import GridSearchCV
+    from sklearn.model_selection import RandomizedSearchCV
     
     rf_base = RandomForestClassifier(random_state=42, n_jobs=-1, class_weight='balanced')
     
+    # Expanded grid
     param_grid = {
-        'n_estimators': [100, 150, 200],
-        'max_depth': [8, 10, 12],
-        'min_samples_split': [5, 10],
-        'min_samples_leaf': [2, 4]
+        'n_estimators': [100, 200, 300, 500],
+        'max_depth': [None, 10, 15, 20, 25],
+        'min_samples_split': [2, 5, 10],
+        'min_samples_leaf': [1, 2, 4],
+        'bootstrap': [True, False]
     }
     
-    n_combinations = np.prod([len(v) for v in param_grid.values()])
-    cv_folds = 3
-    total_fits = n_combinations * cv_folds
+    # Use RandomizedSearch to keep it efficient despite larger grid
+    n_iter = 20
+    cv_folds = 5
+    total_fits = n_iter * cv_folds
     
-    print(f"  Grid Search: {total_fits} fits...")
+    print(f"  Random Search: {total_fits} fits (n_iter={n_iter}, cv={cv_folds})...")
     
     global _progress_tracker
-    _progress_tracker = GridSearchProgress(total_fits, desc="RF Grid Search")
+    _progress_tracker = GridSearchProgress(total_fits, desc="RF Random Search")
     
-    grid_search = GridSearchCV(
-        rf_base, param_grid, cv=cv_folds, scoring=_scoring_with_progress, 
-        n_jobs=2, verbose=0
+    grid_search = RandomizedSearchCV(
+        rf_base, param_grid, n_iter=n_iter, cv=cv_folds, scoring=_scoring_with_progress, 
+        n_jobs=2, verbose=0, random_state=42
     )
     
     try:
@@ -256,19 +258,21 @@ def train_xgboost(data_pack, use_feature_selection=True, keep_ratio=0.6):
     xgb_base = xgb.XGBClassifier(objective='multi:softmax', num_class=len(class_names), 
                                  random_state=42, n_jobs=1, verbosity=0, use_label_encoder=False)
     
+    # Expanded grid
     param_grid = {
-        'n_estimators': [100, 150, 200],
-        'max_depth': [3, 4, 5],
-        'learning_rate': [0.05, 0.1, 0.2],
-        'subsample': [0.8, 0.9, 1.0],
-        'colsample_bytree': [0.6, 0.7, 0.8]
+        'n_estimators': [100, 200, 300, 500],
+        'max_depth': [3, 5, 7, 9],
+        'learning_rate': [0.01, 0.05, 0.1, 0.2, 0.3],
+        'subsample': [0.7, 0.8, 0.9, 1.0],
+        'colsample_bytree': [0.6, 0.7, 0.8, 1.0],
+        'gamma': [0, 0.1, 0.2]
     }
     
-    n_iter = 10
-    cv_folds = 3
+    n_iter = 20
+    cv_folds = 5
     total_fits = n_iter * cv_folds
     
-    print(f"  Random Search: {total_fits} fits...")
+    print(f"  Random Search: {total_fits} fits (n_iter={n_iter}, cv={cv_folds})...")
     
     global _progress_tracker
     _progress_tracker = GridSearchProgress(total_fits, desc="XGB Search")
