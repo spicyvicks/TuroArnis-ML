@@ -1,0 +1,24 @@
+model: yolov8n-pose
+epochs: 50
+imgsz: 416
+batch_size: 8
+device: cpu
+data_yaml: dataset_stick/data.yaml
+confidence_threshold: 0.75
+keypoint_confidence_threshold: 0.5
+augmentation_intensity: light
+augmentation_params:
+  hsv_h: 0.01
+  hsv_s: 0.4
+  hsv_v: 0.3
+  degrees: 10.0
+  translate: 0.05
+  scale: 0.3
+  fliplr: 0.5
+  mosaic: 0.5
+  mixup: 0.0
+research_notes:
+  confidence_threshold: Guo et al. (2017) - neural nets often overconfident
+  augmentation: Shorten & Khoshgoftaar (2019) - monitor val_loss for over-augmentation
+  early_stopping: patience=15 to prevent overfitting
+  cpu_optimized: Using imgsz=416, epochs=50, batch=8 for faster local training

@@ -1,22 +1,79 @@
+"""Train YOLOv8 model for arnis stick detection with keypoints.
+
+Research-Backed Best Practices Applied:
+1. Confidence Thresholding (75%): Predictions below 0.75 are rejected during inference
+   - Ref: Guo et al. (2017) "On Calibration of Modern Neural Networks"
+2. Conservative Augmentation: Moderate augmentation to avoid overfitting to augmented distribution
+   - Ref: Shorten & Khoshgoftaar (2019) - monitor val_loss for signs of over-augmentation
+3. Early Stopping: patience=20 prevents overfitting when val_loss plateaus
+"""
+
 from ultralytics import YOLO
 import os
+import sys
 import torch
 import shutil
-from experiment_manager import CustomExperimentManager
 
 # Set up paths relative to this script
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
+sys.path.insert(0, current_dir)  # Add training folder to path for imports
 
-def train_stick_detector(data_yaml_path, epochs=100, img_size=640, batch_size=16):
+from experiment_manager import CustomExperimentManager
+
+# ============================================================================
+# CONFIGURATION - Research-backed defaults
+# ============================================================================
+CONFIDENCE_THRESHOLD = 0.75  # Reject predictions below 75% (Guo et al., 2017)
+KEYPOINT_CONFIDENCE_THRESHOLD = 0.5  # Keypoints need at least 50% confidence
+AUGMENTATION_INTENSITY = "moderate"  # Options: "light", "moderate", "heavy"
+
+def get_augmentation_params(intensity="moderate"):
+    """
+    Get augmentation parameters based on intensity level.
+    
+    Research note (Shorten & Khoshgoftaar, 2019):
+    - Too much augmentation can cause overfitting to augmented distribution
+    - Monitor validation loss - if it increases while training loss decreases, reduce intensity
+    
+    Args:
+        intensity: "light", "moderate", or "heavy"
+    
+    Returns:
+        Dictionary of augmentation parameters
+    """
+    presets = {
+        "light": {
+            "hsv_h": 0.01, "hsv_s": 0.4, "hsv_v": 0.3,
+            "degrees": 10.0, "translate": 0.05, "scale": 0.3,
+            "fliplr": 0.5, "mosaic": 0.5, "mixup": 0.0,
+        },
+        "moderate": {
+            "hsv_h": 0.015, "hsv_s": 0.5, "hsv_v": 0.4,
+            "degrees": 15.0, "translate": 0.1, "scale": 0.4,
+            "fliplr": 0.5, "mosaic": 0.8, "mixup": 0.0,
+        },
+        "heavy": {
+            "hsv_h": 0.02, "hsv_s": 0.7, "hsv_v": 0.5,
+            "degrees": 20.0, "translate": 0.15, "scale": 0.5,
+            "fliplr": 0.5, "mosaic": 1.0, "mixup": 0.1,
+        }
+    }
+    return presets.get(intensity, presets["moderate"])
+
+
+def train_stick_detector(data_yaml_path, epochs=50, img_size=416, batch_size=8, 
+                         augmentation_intensity="moderate"):
     """
     Train YOLOv8 pose model for stick detection with keypoints.
     
     Args:
         data_yaml_path: Path to data.yaml file from Roboflow dataset
-        epochs: Number of training epochs
-        img_size: Image size for training
-        batch_size: Batch size for training
+        epochs: Number of training epochs (default: 50 for faster CPU training)
+        img_size: Image size for training (default: 416 for faster CPU training)
+        batch_size: Batch size for training (default: 8 for CPU memory efficiency)
+        augmentation_intensity: "light", "moderate", or "heavy" (default: moderate)
+                               Research suggests monitoring val_loss for over-augmentation
     """
     
     # Initialize experiment manager
@@ -33,14 +90,27 @@ def train_stick_detector(data_yaml_path, epochs=100, img_size=640, batch_size=16
     # Available options: yolov8n-pose.pt, yolov8s-pose.pt, yolov8m-pose.pt, yolov8l-pose.pt, yolov8x-pose.pt
     model = YOLO('yolov8n-pose.pt')
     
-    # Log config
+    # Get augmentation parameters
+    aug_params = get_augmentation_params(augmentation_intensity)
+    
+    # Log config with research notes
     exp.log_config({
         "model": "yolov8n-pose",
         "epochs": epochs,
         "imgsz": img_size,
         "batch_size": batch_size,
         "device": str(device),
-        "data_yaml": data_yaml_path
+        "data_yaml": data_yaml_path,
+        "confidence_threshold": CONFIDENCE_THRESHOLD,
+        "keypoint_confidence_threshold": KEYPOINT_CONFIDENCE_THRESHOLD,
+        "augmentation_intensity": augmentation_intensity,
+        "augmentation_params": aug_params,
+        "research_notes": {
+            "confidence_threshold": "Guo et al. (2017) - neural nets often overconfident",
+            "augmentation": "Shorten & Khoshgoftaar (2019) - monitor val_loss for over-augmentation",
+            "early_stopping": "patience=15 to prevent overfitting",
+            "cpu_optimized": "Using imgsz=416, epochs=50, batch=8 for faster local training"
+        }
     })
     
     # Train the model
@@ -51,10 +121,10 @@ def train_stick_detector(data_yaml_path, epochs=100, img_size=640, batch_size=16
         batch=batch_size,
         project=os.path.join(project_root, 'runs', 'pose'),
         name='arnis_stick_detector',
-        patience=20,  # Early stopping patience
+        patience=15,  # Early stopping patience (faster convergence check)
         save=True,
         device=device,
-        workers=4,
+        workers=2,  # Reduced workers for CPU
         pretrained=True,
         optimizer='auto',
         verbose=True,
@@ -83,19 +153,20 @@ def train_stick_detector(data_yaml_path, epochs=100, img_size=640, batch_size=16
         kobj=1.0,  # Keypoint objectness loss gain
         label_smoothing=0.0,
         nbs=64,
-        hsv_h=0.015,  # HSV-Hue augmentation
-        hsv_s=0.7,  # HSV-Saturation augmentation
-        hsv_v=0.4,  # HSV-Value augmentation
-        degrees=15.0,  # Added rotation augmentation for better stick angle coverage
-        translate=0.1,  # Translation augmentation
-        scale=0.5,  # Scale augmentation
-        shear=0.0,  # Shear augmentation
-        perspective=0.0,  # Perspective augmentation
-        flipud=0.0,  # Flip up-down augmentation
-        fliplr=0.5,  # Flip left-right augmentation
-        mosaic=1.0,  # Mosaic augmentation
-        mixup=0.0,  # Mixup augmentation
-        copy_paste=0.0,  # Copy-paste augmentation
+        # Augmentation params from research-backed presets (Shorten & Khoshgoftaar, 2019)
+        hsv_h=aug_params["hsv_h"],
+        hsv_s=aug_params["hsv_s"],
+        hsv_v=aug_params["hsv_v"],
+        degrees=aug_params["degrees"],
+        translate=aug_params["translate"],
+        scale=aug_params["scale"],
+        shear=0.0,  # Keep zero - stick detection needs straight lines
+        perspective=0.0,  # Keep zero - perspective distorts keypoint labels
+        flipud=0.0,  # Keep zero - sticks aren't typically upside down
+        fliplr=aug_params["fliplr"],
+        mosaic=aug_params["mosaic"],
+        mixup=aug_params["mixup"],
+        copy_paste=0.0,  # Keep zero - causes label confusion for keypoints
     )
     
     # Validate the model
@@ -131,16 +202,28 @@ def train_stick_detector(data_yaml_path, epochs=100, img_size=640, batch_size=16
     return model
 
 
-def test_model(model_path, test_image_path):
+def test_model(model_path, test_image_path, conf_threshold=None, kpt_conf_threshold=None):
     """
-    Test the trained model on a single image.
+    Test the trained model on a single image with confidence thresholding.
+    
+    Research note (Guo et al., 2017):
+    - Modern neural networks are often overconfident
+    - We apply a 75% confidence threshold by default to reduce false positives
     
     Args:
         model_path: Path to trained model weights
         test_image_path: Path to test image
+        conf_threshold: Minimum box confidence (default: 0.75 per research)
+        kpt_conf_threshold: Minimum keypoint confidence (default: 0.5)
     """
+    if conf_threshold is None:
+        conf_threshold = CONFIDENCE_THRESHOLD
+    if kpt_conf_threshold is None:
+        kpt_conf_threshold = KEYPOINT_CONFIDENCE_THRESHOLD
+        
     model = YOLO(model_path)
-    results = model(test_image_path)
+    # Apply confidence threshold during inference
+    results = model(test_image_path, conf=conf_threshold)
     
     # Display results
     for result in results:
@@ -149,14 +232,34 @@ def test_model(model_path, test_image_path):
         
         # Print detection info
         if result.keypoints is not None:
-            print(f"\nDetected {len(result.boxes)} stick(s)")
+            valid_detections = 0
+            print(f"\n[INFO] Confidence threshold: {conf_threshold:.0%} (Guo et al., 2017)")
+            print(f"[INFO] Keypoint threshold: {kpt_conf_threshold:.0%}")
+            
             for i, (box, kpts) in enumerate(zip(result.boxes, result.keypoints)):
-                print(f"\nStick {i+1}:")
-                print(f"  Confidence: {box.conf.item():.3f}")
+                box_conf = box.conf.item()
+                
+                # Check keypoint confidence
+                kpts_data = kpts.data[0]
+                if len(kpts_data) >= 2:
+                    grip_conf = kpts_data[0][2].item()
+                    tip_conf = kpts_data[1][2].item()
+                    
+                    if grip_conf < kpt_conf_threshold or tip_conf < kpt_conf_threshold:
+                        print(f"\n[REJECTED] Stick {i+1}: Keypoint confidence too low")
+                        print(f"  Grip conf: {grip_conf:.3f}, Tip conf: {tip_conf:.3f}")
+                        continue
+                
+                valid_detections += 1
+                print(f"\n[ACCEPTED] Stick {valid_detections}:")
+                print(f"  Box Confidence: {box_conf:.1%}")
                 print(f"  Bbox: {box.xyxy.tolist()}")
                 print(f"  Keypoints (x, y, conf):")
-                for j, kpt in enumerate(kpts.data[0]):
-                    print(f"    Point {j+1}: ({kpt[0]:.1f}, {kpt[1]:.1f}, {kpt[2]:.3f})")
+                for j, kpt in enumerate(kpts_data):
+                    kpt_name = "Grip" if j == 0 else "Tip"
+                    print(f"    {kpt_name}: ({kpt[0]:.1f}, {kpt[1]:.1f}, {kpt[2]:.1%})")
+            
+            print(f"\n[SUMMARY] {valid_detections} valid detection(s) above threshold")
     
     return results
 

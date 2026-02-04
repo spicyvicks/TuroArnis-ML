@@ -1,0 +1,7 @@
+{
+  "experiment_id": "stick_detector_20260204_173328",
+  "experiment_name": "stick_detector",
+  "description": "Stick detection training: 50 epochs, imgsz=416",
+  "created_at": "2026-02-04T17:33:28.436289",
+  "status": "running"
+}
