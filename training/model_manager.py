@@ -134,10 +134,16 @@ def train_new_model():
     
     if ext_choice != '2':
         print("\nSelect Feature Mode:")
-        print("  1. Angles (58 features) - Recommended")
-        print("  2. Coordinates (99 features)")
-        m_choice = input("Choice [1]: ").strip()
-        mode = 'coordinates' if m_choice == '2' else 'angles'
+        print("  1. Angles (58 body features) - Body only")
+        print("  2. Coordinates (99 body features) - Body only")
+        print("  3. Combined (72 features) - Body + Stick [RECOMMENDED]")
+        m_choice = input("Choice [3]: ").strip()
+        if m_choice == '1':
+            mode = 'angles'
+        elif m_choice == '2':
+            mode = 'coordinates'
+        else:
+            mode = 'combined'
         
         print(f"\n[INFO] Running extraction ({mode})...")
         try:
