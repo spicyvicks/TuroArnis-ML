@@ -1,13 +1,3 @@
-"""
-Train YOLOv8 model for arnis stick detection with keypoints.
-
-The model will detect:
-- Stick bounding box
-- Stick keypoints (grip point and tip point)
-
-Dataset should be in YOLOv8 format from Roboflow.
-"""
-
 from ultralytics import YOLO
 import os
 import torch

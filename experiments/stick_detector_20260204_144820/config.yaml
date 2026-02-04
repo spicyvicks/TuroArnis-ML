@@ -1,0 +1,6 @@
+model: yolov8n-pose
+epochs: 100
+imgsz: 640
+batch_size: 16
+device: cpu
+data_yaml: dataset_stick/data.yaml
