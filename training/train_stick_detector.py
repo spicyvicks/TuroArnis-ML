@@ -10,6 +10,13 @@ Dataset should be in YOLOv8 format from Roboflow.
 
 from ultralytics import YOLO
 import os
+import torch
+import shutil
+from experiment_manager import CustomExperimentManager
+
+# Set up paths relative to this script
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
 
 def train_stick_detector(data_yaml_path, epochs=100, img_size=640, batch_size=16):
     """
@@ -22,9 +29,29 @@ def train_stick_detector(data_yaml_path, epochs=100, img_size=640, batch_size=16
         batch_size: Batch size for training
     """
     
+    # Initialize experiment manager
+    exp = CustomExperimentManager(
+        experiment_name="stick_detector",
+        description=f"Stick detection training: {epochs} epochs, imgsz={img_size}"
+    )
+    
+    # Detect device
+    device = 0 if torch.cuda.is_available() else 'cpu'
+    print(f"[INFO] Using device: {device}")
+    
     # Use YOLOv8n-pose as base model (smallest, fastest)
     # Available options: yolov8n-pose.pt, yolov8s-pose.pt, yolov8m-pose.pt, yolov8l-pose.pt, yolov8x-pose.pt
     model = YOLO('yolov8n-pose.pt')
+    
+    # Log config
+    exp.log_config({
+        "model": "yolov8n-pose",
+        "epochs": epochs,
+        "imgsz": img_size,
+        "batch_size": batch_size,
+        "device": str(device),
+        "data_yaml": data_yaml_path
+    })
     
     # Train the model
     results = model.train(
@@ -32,10 +59,11 @@ def train_stick_detector(data_yaml_path, epochs=100, img_size=640, batch_size=16
         epochs=epochs,
         imgsz=img_size,
         batch=batch_size,
+        project=os.path.join(project_root, 'runs', 'pose'),
         name='arnis_stick_detector',
         patience=20,  # Early stopping patience
         save=True,
-        device='cpu',  # Use CPU (change to 0 for GPU if available)
+        device=device,
         workers=4,
         pretrained=True,
         optimizer='auto',
@@ -46,8 +74,9 @@ def train_stick_detector(data_yaml_path, epochs=100, img_size=640, batch_size=16
         rect=False,
         cos_lr=True,  # Cosine learning rate scheduler
         close_mosaic=10,  # Close mosaic augmentation in last 10 epochs
-        amp=True,  # Automatic Mixed Precision
+        amp=(device != 'cpu'),  # Automatic Mixed Precision
         fraction=1.0,  # Train on 100% of data
+        exist_ok=True,  # Overwrite previous run to maintain consistent path
         profile=False,
         freeze=None,
         lr0=0.01,
@@ -67,7 +96,7 @@ def train_stick_detector(data_yaml_path, epochs=100, img_size=640, batch_size=16
         hsv_h=0.015,  # HSV-Hue augmentation
         hsv_s=0.7,  # HSV-Saturation augmentation
         hsv_v=0.4,  # HSV-Value augmentation
-        degrees=0.0,  # Rotation augmentation (degrees)
+        degrees=15.0,  # Added rotation augmentation for better stick angle coverage
         translate=0.1,  # Translation augmentation
         scale=0.5,  # Scale augmentation
         shear=0.0,  # Shear augmentation
@@ -82,11 +111,27 @@ def train_stick_detector(data_yaml_path, epochs=100, img_size=640, batch_size=16
     # Validate the model
     metrics = model.val()
     
+    # Log metrics to experiment manager
+    exp.log_metrics(
+        box_map50=metrics.box.map50,
+        box_map=metrics.box.map,
+        pose_map50=metrics.pose.map50,
+        pose_map=metrics.pose.map
+    )
+    
+    # Copy model weights to experiment folder
+    best_weights = os.path.join(project_root, 'runs', 'pose', 'arnis_stick_detector', 'weights', 'best.pt')
+    if os.path.exists(best_weights):
+        exp.save_model(best_weights, "best_stick_detector.pt")
+        
+    exp.finalize(f"Completed {epochs} epochs. Box mAP50: {metrics.box.map50:.4f}, Pose mAP50: {metrics.pose.map50:.4f}")
+    
     print("\n" + "="*50)
     print("Training Complete!")
     print("="*50)
-    print(f"Best model saved to: runs/pose/arnis_stick_detector/weights/best.pt")
-    print(f"Last model saved to: runs/pose/arnis_stick_detector/weights/last.pt")
+    print(f"Best model saved to: {best_weights}")
+    print(f"Last model saved to: {os.path.join(project_root, 'runs', 'pose', 'arnis_stick_detector', 'weights', 'last.pt')}")
+    print(f"Experiment log: {exp.experiment_dir}")
     print(f"\nValidation Metrics:")
     print(f"Box mAP50: {metrics.box.map50:.4f}")
     print(f"Box mAP50-95: {metrics.box.map:.4f}")
