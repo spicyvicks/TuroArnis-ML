@@ -233,7 +233,7 @@ def generate_analysis():
                     return
                 
                 sys.path.insert(0, os.path.join(project_root, 'tools'))
-                from get_classification_report import generate_classification_report
+                from get_classification_report import generate_classification_report  # type: ignore
                 generate_classification_report()
                 
             elif model_type in ['random_forest', 'xgboost']:

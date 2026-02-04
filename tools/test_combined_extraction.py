@@ -1,14 +1,23 @@
-"""
-Test script to visualize MediaPipe body landmarks + YOLO stick detector
-Run this to see if combined feature extraction works before full implementation
-"""
 import cv2
 import numpy as np
-import mediapipe as mp
 from ultralytics import YOLO
 import os
 import sys
 import argparse
+
+# MediaPipe import with version compatibility
+try:
+    # Try legacy API first (works with most versions)
+    import mediapipe as mp
+    mp_pose = mp.solutions.pose
+    mp_draw = mp.solutions.drawing_utils
+    mp_draw_styles = mp.solutions.drawing_styles
+    MEDIAPIPE_LEGACY = True
+except AttributeError:
+    # Fallback for newer MediaPipe versions
+    from mediapipe.tasks import python
+    from mediapipe.tasks.python import vision
+    MEDIAPIPE_LEGACY = False
 
 # paths
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -70,10 +79,7 @@ def test_combined_extraction(image_path, verbose=True):
     print("  MEDIAPIPE BODY LANDMARKS")
     print("="*60)
     
-    mp_pose = mp.solutions.pose
-    mp_draw = mp.solutions.drawing_utils
-    mp_draw_styles = mp.solutions.drawing_styles
-    
+    # Use global mp_pose, mp_draw, mp_draw_styles from imports
     debug_print("Initializing MediaPipe Pose (complexity=2)...")
     pose = mp_pose.Pose(static_image_mode=True, model_complexity=2, min_detection_confidence=0.5)
     
