@@ -113,17 +113,27 @@ def extract_body_features(lm):
     shoulder_tilt = lm[11].y - lm[12].y
     hip_tilt = lm[23].y - lm[24].y
     stance_width = abs(lm[27].x - lm[28].x)
-    facing_direction = lm[11].z - lm[12].z
+    facing_direction_z = lm[11].z - lm[12].z  # Depth-based rotation
     
-    # ===== DISTANCE FEATURES (8) =====
-    hand_distance = np.sqrt((lm[19].x - lm[20].x)**2 + (lm[19].y - lm[20].y)**2 + (lm[19].z - lm[20].z)**2)
-    wrist_distance = np.sqrt((lm[15].x - lm[16].x)**2 + (lm[15].y - lm[16].y)**2 + (lm[15].z - lm[16].z)**2)
-    left_arm_extension = np.sqrt((lm[15].x - lm[23].x)**2 + (lm[15].y - lm[23].y)**2)
-    right_arm_extension = np.sqrt((lm[16].x - lm[24].x)**2 + (lm[16].y - lm[24].y)**2)
-    left_elbow_dist = np.sqrt((lm[13].x - hip_center[0])**2 + (lm[13].y - hip_center[1])**2)
-    right_elbow_dist = np.sqrt((lm[14].x - hip_center[0])**2 + (lm[14].y - hip_center[1])**2)
-    knee_distance = np.sqrt((lm[25].x - lm[26].x)**2 + (lm[25].y - lm[26].y)**2)
-    foot_distance = np.sqrt((lm[31].x - lm[32].x)**2 + (lm[31].y - lm[32].y)**2 + (lm[31].z - lm[32].z)**2)
+    # Better facing direction: nose position relative to shoulder midpoint
+    # If nose is left of shoulder center, person is facing left (negative value)
+    # If nose is right of shoulder center, person is facing right (positive value)
+    shoulder_center_x = (lm[11].x + lm[12].x) / 2
+    nose_x = lm[0].x
+    facing_direction = nose_x - shoulder_center_x  # Positive = facing right, Negative = facing left
+    
+    # ===== DISTANCE FEATURES (8) - normalized by body height for scale invariance =====
+    # Body height for normalization (critical for different camera distances)
+    body_height = abs(lm[0].y - (lm[27].y + lm[28].y)/2) + 0.001  # Add small epsilon
+    
+    hand_distance = np.sqrt((lm[19].x - lm[20].x)**2 + (lm[19].y - lm[20].y)**2 + (lm[19].z - lm[20].z)**2) / body_height
+    wrist_distance = np.sqrt((lm[15].x - lm[16].x)**2 + (lm[15].y - lm[16].y)**2 + (lm[15].z - lm[16].z)**2) / body_height
+    left_arm_extension = np.sqrt((lm[15].x - lm[23].x)**2 + (lm[15].y - lm[23].y)**2) / body_height
+    right_arm_extension = np.sqrt((lm[16].x - lm[24].x)**2 + (lm[16].y - lm[24].y)**2) / body_height
+    left_elbow_dist = np.sqrt((lm[13].x - hip_center[0])**2 + (lm[13].y - hip_center[1])**2) / body_height
+    right_elbow_dist = np.sqrt((lm[14].x - hip_center[0])**2 + (lm[14].y - hip_center[1])**2) / body_height
+    knee_distance = np.sqrt((lm[25].x - lm[26].x)**2 + (lm[25].y - lm[26].y)**2) / body_height
+    foot_distance = np.sqrt((lm[31].x - lm[32].x)**2 + (lm[31].y - lm[32].y)**2 + (lm[31].z - lm[32].z)**2) / body_height
     
     distances = [hand_distance, wrist_distance, left_arm_extension, right_arm_extension,
                 left_elbow_dist, right_elbow_dist, knee_distance, foot_distance]
@@ -137,11 +147,11 @@ def extract_body_features(lm):
     
     symmetry = [elbow_symmetry, shoulder_symmetry, knee_symmetry, arm_raise_symmetry, wrist_height_diff]
     
-    # ===== BODY PROPORTIONS (4) =====
-    arm_span = abs(lm[15].x - lm[16].x)
-    body_height = abs(lm[0].y - (lm[27].y + lm[28].y)/2)
-    arm_to_height_ratio = arm_span / (body_height + 0.001)
-    stance_depth = abs(lm[27].z - lm[28].z)
+    # ===== BODY PROPORTIONS (4) - scale invariant =====
+    arm_span = abs(lm[15].x - lm[16].x) / body_height
+    arm_to_height_ratio = arm_span  # Already normalized by body_height
+    stance_width_norm = stance_width / body_height
+    stance_depth = abs(lm[27].z - lm[28].z) / body_height
     
     proportions = [arm_span, body_height, arm_to_height_ratio, stance_depth]
     

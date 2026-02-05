@@ -122,6 +122,14 @@ def load_and_prepare_data(use_cross_validation=False):
         X_train = scaler.fit_transform(X_train)
         X_test = scaler.transform(X_test)
         
+        # Feature noise augmentation to reduce overfitting
+        print("  Applying feature noise augmentation (2x data)...")
+        noise_level = 0.05  # 5% Gaussian noise
+        X_train_noisy = X_train + np.random.normal(0, noise_level, X_train.shape)
+        X_train = np.vstack([X_train, X_train_noisy])
+        y_train = np.concatenate([y_train, y_train])
+        print(f"  Augmented train: {len(X_train)} samples")
+        
         return (X_train, y_train), (X_test, y_test), scaler, le, class_names, feature_names
 
 def select_features(X_train, y_train, X_test, feature_names, keep_ratio=0.6, protect_stick=True):
@@ -254,13 +262,15 @@ def train_random_forest(data_pack, use_feature_selection=True, keep_ratio=0.6, p
     
     rf_base = RandomForestClassifier(random_state=42, n_jobs=-1, class_weight='balanced')
     
-    # Expanded grid
+    # ANTI-OVERFITTING param grid - prioritizes regularization
     param_grid = {
-        'n_estimators': [100, 200, 300, 500],
-        'max_depth': [None, 10, 15, 20, 25],
-        'min_samples_split': [2, 5, 10],
-        'min_samples_leaf': [1, 2, 4],
-        'bootstrap': [True, False]
+        'n_estimators': [200, 300, 500],
+        'max_depth': [5, 8, 10, 12],           # LOWER depths to prevent memorization
+        'min_samples_split': [10, 20, 30],     # HIGHER - need more samples to split
+        'min_samples_leaf': [5, 10, 15],       # HIGHER - prevent small leaves
+        'max_features': ['sqrt', 0.3, 0.5],    # LIMIT features per tree
+        'bootstrap': [True],                    # Always bootstrap for variance reduction
+        'max_samples': [0.7, 0.8, 0.9]         # Subsample training data
     }
     
     # Use RandomizedSearch to keep it efficient despite larger grid
@@ -323,10 +333,9 @@ def train_random_forest(data_pack, use_feature_selection=True, keep_ratio=0.6, p
             print(f"\n  📊 SUMMARY:")
             print(f"     CV Accuracy (reliable):  {cv_acc:.2%} ± {cv_std:.2%}")
             print(f"     Test Accuracy (verify):  {test_acc:.2%}")
-            # Use CV accuracy as the primary metric (more reliable)
-            test_acc = cv_acc
+            # Keep test_acc as the real test accuracy, cv_acc stored separately
         else:
-            test_acc = cv_acc
+            test_acc = cv_acc  # No test set, fallback to CV
     else:
         # Traditional train/test split evaluation
         test_acc = accuracy_score(y_test, model.predict(X_test_selected if use_feature_selection else X_test))
@@ -348,10 +357,14 @@ def train_random_forest(data_pack, use_feature_selection=True, keep_ratio=0.6, p
             'importance': float(model.feature_importances_[i])
         })
     
+    # Get cv_acc for saving (if available)
+    final_cv_acc = cv_acc if 'cv_acc' in dir() else None
+    
     save_model(
         model, scaler, le, class_names, test_acc, 'random_forest', 
         grid_search.best_params_, selected_feature_names,
-        all_importance_data, final_importance_data, n_features_original
+        all_importance_data, final_importance_data, n_features_original,
+        cv_acc=final_cv_acc
     )
 
 def train_xgboost(data_pack, use_feature_selection=True, keep_ratio=0.6, protect_stick=True, use_cv=False, hybrid_mode=False):
@@ -394,14 +407,17 @@ def train_xgboost(data_pack, use_feature_selection=True, keep_ratio=0.6, protect
     xgb_base = xgb.XGBClassifier(objective='multi:softmax', num_class=len(class_names), 
                                  random_state=42, n_jobs=1, verbosity=0, use_label_encoder=False)
     
-    # Expanded grid
+    # ANTI-OVERFITTING param grid - heavy regularization
     param_grid = {
-        'n_estimators': [100, 200, 300, 500],
-        'max_depth': [3, 5, 7, 9],
-        'learning_rate': [0.01, 0.05, 0.1, 0.2, 0.3],
-        'subsample': [0.7, 0.8, 0.9, 1.0],
-        'colsample_bytree': [0.6, 0.7, 0.8, 1.0],
-        'gamma': [0, 0.1, 0.2]
+        'n_estimators': [100, 200, 300],
+        'max_depth': [3, 4, 5, 6],             # LOWER - prevents deep memorization
+        'learning_rate': [0.01, 0.03, 0.05],  # LOWER - slower learning generalizes better
+        'subsample': [0.6, 0.7, 0.8],          # LOWER - use less data per tree
+        'colsample_bytree': [0.5, 0.6, 0.7],   # LOWER - use fewer features per tree
+        'gamma': [0.1, 0.3, 0.5, 1.0],         # HIGHER - require more gain to split
+        'reg_alpha': [0, 0.1, 0.5, 1.0],       # L1 regularization
+        'reg_lambda': [1.0, 2.0, 5.0],         # L2 regularization
+        'min_child_weight': [3, 5, 10]         # HIGHER - need more samples in leaves
     }
     
     n_iter = 20
@@ -460,9 +476,9 @@ def train_xgboost(data_pack, use_feature_selection=True, keep_ratio=0.6, protect
             print(f"\n  📊 SUMMARY:")
             print(f"     CV Accuracy (reliable):  {cv_acc:.2%} ± {cv_std:.2%}")
             print(f"     Test Accuracy (verify):  {test_acc:.2%}")
-            test_acc = cv_acc  # Use CV accuracy as the primary metric
+            # Keep test_acc as the real test accuracy, cv_acc stored separately
         else:
-            test_acc = cv_acc
+            test_acc = cv_acc  # No test set, fallback to CV
     else:
         test_acc = accuracy_score(y_test, model.predict(X_test_selected if use_feature_selection else X_test))
         print(f"  Test Acc:    {test_acc:.2%}")
@@ -483,14 +499,18 @@ def train_xgboost(data_pack, use_feature_selection=True, keep_ratio=0.6, protect
             'importance': float(model.feature_importances_[i])
         })
     
+    # Get cv_acc for saving (if available)
+    final_cv_acc = cv_acc if 'cv_acc' in dir() else None
+    
     save_model(
         model, scaler, le, class_names, test_acc, 'xgboost', 
         search.best_params_, selected_feature_names,
-        all_importance_data, final_importance_data, n_features_original
+        all_importance_data, final_importance_data, n_features_original,
+        cv_acc=final_cv_acc
     )
 
 def save_model(model, scaler, le, class_names, test_acc, model_type, params,
-               selected_features=None, feature_selection_data=None, final_importance_data=None, n_features_in=None):
+               selected_features=None, feature_selection_data=None, final_importance_data=None, n_features_in=None, cv_acc=None):
     version_num = get_next_version(models_dir)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     version_name = f"v{version_num:03d}_{timestamp}_{model_type}"
@@ -526,11 +546,14 @@ def save_model(model, scaler, le, class_names, test_acc, model_type, params,
         'model_type': model_type,
         'trained_at': datetime.now().isoformat(),
         'test_accuracy': float(test_acc),
+        'cv_accuracy': float(cv_acc) if cv_acc is not None else None,
         'hyperparameters': params,
         'class_names': class_names,
         'num_features': len(selected_features) if selected_features else None,
         'n_features_in': n_features_in,  # Total features before selection
-        'feature_selection_used': feature_selection_data is not None
+        'feature_selection_used': feature_selection_data is not None,
+        'stick_features_protected': feature_selection_data is not None,  # Only relevant when selection used
+        'features_dropped': n_features_in - len(selected_features) if selected_features and n_features_in else 0
     }
     with open(os.path.join(version_dir, 'metadata.json'), 'w') as f:
         json.dump(metadata, f, indent=2)

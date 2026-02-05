@@ -434,10 +434,12 @@ def evaluate_existing_model():
     print("="*60)
     print("\nSelect a model to evaluate (0 to go back):")
     for i, v in enumerate(rf_xgb_versions, 1):
-        acc = f"{v.get('test_accuracy', 0)*100:.1f}%" if v.get('test_accuracy') else "N/A"
+        test_acc = f"{v.get('test_accuracy', 0)*100:.1f}%" if v.get('test_accuracy') else "N/A"
+        cv_acc = f"CV:{v.get('cv_accuracy', 0)*100:.0f}%" if v.get('cv_accuracy') else ""
         model_type = v.get('model_type', 'unknown')
         n_features = v.get('n_features_in', v.get('num_features', '?'))
-        print(f"  {i}. {v['name']} ({model_type}) - {acc} - {n_features} features")
+        acc_display = f"Test:{test_acc}" + (f" {cv_acc}" if cv_acc else "")
+        print(f"  {i}. {v['name']} ({model_type}) - {acc_display} - {n_features} features")
     
     if not rf_xgb_versions:
         print("\n[ERROR] No RF/XGBoost models found. Train one first.")
@@ -500,21 +502,37 @@ def evaluate_existing_model():
         print(f"\n[WARN] Model trained on {model_n_features} features, CSV has {len(feature_names)}")
         print("       Results may be inaccurate. Consider retraining.")
     
-    # Apply feature selection if model used it
-    if selected_features:
-        print(f"[INFO] Applying feature selection ({len(selected_features)} features)")
-        train_df = train_df[['class'] + [f for f in selected_features if f in train_df.columns]]
-        test_df = test_df[['class'] + [f for f in selected_features if f in test_df.columns]]
-        feature_names = [c for c in train_df.columns if c != 'class']
-    
-    X_train = train_df.drop('class', axis=1).values
+    # Get X and y BEFORE feature selection (scaler expects all features)
+    X_train_all = train_df.drop('class', axis=1).values
+    X_test_all = test_df.drop('class', axis=1).values
     y_train = le.transform(train_df['class'].values)
-    X_test = test_df.drop('class', axis=1).values
     y_test = le.transform(test_df['class'].values)
     
-    # Scale
-    X_train_scaled = scaler.transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+    # Scale first (scaler was trained on all features)
+    X_train_scaled = scaler.transform(X_train_all)
+    X_test_scaled = scaler.transform(X_test_all)
+    
+    # THEN apply feature selection if model used it
+    if selected_features:
+        # Check which features are available
+        available = [f for f in selected_features if f in feature_names]
+        missing = [f for f in selected_features if f not in feature_names]
+        
+        if missing:
+            print(f"\n[WARN] {len(missing)} features missing from CSV:")
+            for f in missing[:5]:
+                print(f"       - {f}")
+            if len(missing) > 5:
+                print(f"       ... and {len(missing)-5} more")
+            print("       Results may be inaccurate.")
+        
+        # Get indices of selected features
+        feature_indices = [feature_names.index(f) for f in available]
+        print(f"[INFO] Applying feature selection ({len(available)}/{len(selected_features)} features)")
+        
+        X_train_scaled = X_train_scaled[:, feature_indices]
+        X_test_scaled = X_test_scaled[:, feature_indices]
+        feature_names = available
     
     print("\n" + "="*60)
     print("   EVALUATION RESULTS")
@@ -538,13 +556,47 @@ def evaluate_existing_model():
             print(f"   {status} {cls:35} {recall*100:5.1f}% ({support} samples)")
     
     # Cross-validation
+    cv_scores = None
+    cv_pred = None
+    cv_cm = None
+    cv_report = None
     if eval_mode != '1':
+        from sklearn.model_selection import cross_val_predict
         print("\n📊 CROSS-VALIDATION (5-fold on training data)")
         print("-"*40)
         skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         cv_scores = cross_val_score(model, X_train_scaled, y_train, cv=skf, n_jobs=-1)
         print(f"   CV Accuracy: {cv_scores.mean()*100:.2f}% ± {cv_scores.std()*100:.2f}%")
         print(f"   Fold scores: {[f'{s*100:.1f}%' for s in cv_scores]}")
+        
+        # Get CV predictions for confusion matrix and classification report
+        cv_pred = cross_val_predict(model, X_train_scaled, y_train, cv=skf, n_jobs=-1)
+        cv_acc = accuracy_score(y_train, cv_pred)
+        print(f"   Overall: {cv_acc*100:.2f}% ({sum(y_train == cv_pred)}/{len(y_train)} correct)")
+        
+        # CV Per-class accuracy
+        print("\n   CV Per-Class Performance:")
+        cv_report = classification_report(y_train, cv_pred, target_names=le.classes_, output_dict=True)
+        for cls in sorted(le.classes_):
+            recall = cv_report[cls]['recall']
+            support = int(cv_report[cls]['support'])
+            status = "✓" if recall >= 0.6 else ("⚠" if recall >= 0.4 else "✗")
+            print(f"   {status} {cls:35} {recall*100:5.1f}% ({support} samples)")
+        
+        # CV Confusion matrix summary
+        print("\n📊 CV MOST CONFUSED PAIRS")
+        print("-"*40)
+        cv_cm = confusion_matrix(y_train, cv_pred)
+        cv_confused_pairs = []
+        for i in range(len(le.classes_)):
+            for j in range(len(le.classes_)):
+                if i != j and cv_cm[i, j] > 0:
+                    cv_confused_pairs.append((le.classes_[i], le.classes_[j], cv_cm[i, j], cv_cm[i].sum()))
+        
+        cv_confused_pairs.sort(key=lambda x: x[2]/max(x[3], 1), reverse=True)
+        for true_cls, pred_cls, count, total in cv_confused_pairs[:5]:
+            pct = count / total * 100 if total > 0 else 0
+            print(f"   {true_cls[:20]:20} → {pred_cls[:20]:20} ({pct:.0f}%)")
     
     # Confusion matrix summary
     if eval_mode != '2':
@@ -566,19 +618,35 @@ def evaluate_existing_model():
     
     # Ask about visualizations
     print("\nGenerate visualizations? (0 to go back to menu)")
-    print("  1. Yes, show me the charts!")
-    print("  2. No thanks")
-    viz_choice = input("Choice [1]: ").strip()
+    print("  1. Test set charts")
+    print("  2. CV charts")
+    print("  3. Both")
+    print("  4. No thanks")
+    viz_choice = input("Choice [3]: ").strip()
     
     if viz_choice == '0' or viz_choice.lower() == 'b':
         return
     
-    if viz_choice != '2' and eval_mode != '2':
+    if not viz_choice:
+        viz_choice = '3'
+    
+    # Generate test set visualizations
+    if viz_choice in ['1', '3'] and eval_mode != '2':
         generate_evaluation_visualizations(
             model, X_test_scaled, y_test, y_pred, le, 
             selected['name'], test_acc, report, cm,
             cv_scores if eval_mode != '1' else None,
-            eval_mode
+            'test'
+        )
+    
+    # Generate CV visualizations
+    if viz_choice in ['2', '3'] and eval_mode != '1' and cv_cm is not None:
+        cv_acc = accuracy_score(y_train, cv_pred)
+        generate_evaluation_visualizations(
+            model, X_train_scaled, y_train, cv_pred, le, 
+            selected['name'], cv_acc, cv_report, cv_cm,
+            cv_scores,
+            'cv'
         )
     
     # Option to view model details
