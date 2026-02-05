@@ -52,44 +52,136 @@
 4. **Temporal Smoothing**: EMA for video frames
 5. **Deployment**: ONNX conversion for desktop
 
-## Key Decisions Needed
+## Test Strategy Decision (CONFIRMED)
 
-### 1. Scope: Full Migration vs Hybrid?
-**Option A: Full Migration (RECOMMENDED)**
-- Replace RF/XGB entirely with GeoPose-Net
-- Complete rewrite of training pipeline
-- Higher risk but maximum potential gain
+### Automated Tests
+✅ **Option C: None** - Skip formal tests initially, use training accuracy metrics
+- Can add TDD (Option A) or tests-after (Option B) in a few days
+- Focus on getting to 80%+ accuracy first
 
-**Option B: Hybrid (Conservative)**
-- Keep current feature extraction
-- Add GCN as secondary classifier
-- Ensemble with existing models
-- Lower risk, incremental improvement
+### Agent QA Verification
+Every task will include **Agent-Executed QA Scenarios**:
+- **Bash**: For training runs, file operations, accuracy checks
+- **Python REPL**: For model inference validation
+- **interactive_bash**: For CLI training scripts
 
-### 2. Implementation Complexity?
-**Option A: Full Implementation (4-6 weeks)**
-- Complete PyTorch Geometric pipeline
-- All bells and whistles (ArcFace, hard negatives, temporal smoothing)
-- Maximum accuracy potential
+## Timeline Constraint (CRITICAL)
 
-**Option B: MVP (1-2 weeks)**
-- Basic GCN + simple fusion
-- Skip hierarchical classification initially
-- Validate approach before full investment
+**User Requirement**: Methodology achievable in **DAYS**, not weeks
 
-### 3. Pre-requisites Check
-- [ ] PyTorch installed?
-- [ ] CUDA available (or CPU-only)?
-- [ ] PyTorch Geometric can be installed?
-- [ ] Existing CSV landmarks can be converted?
+### Revised Phased Approach (Aggressive MVP)
 
-### 4. Data Questions
-- Are the 12 Arnis pose names/descriptions available?
-- Is weapon handedness consistent (right-handed)?
-- Any missing weapon keypoints in current dataset?
+**Phase 1: Day 1-2** - Environment + Weapon Geometry Correction
+- Install PyTorch + PyTorch Geometric (CPU)
+- Implement weapon rigidity correction
+- Validate on existing dataset
 
-### 5. Success Criteria
-- Minimum acceptable accuracy: ___%
-- Target accuracy: ___%
-- Maximum acceptable training time: ___
-- Deployment constraint: Desktop only / Cloud option?
+**Phase 2: Day 3-4** - Basic GCN Classifier
+- Simple 2-layer GAT (no visual stream yet)
+- Convert CSV to graph format
+- Train and validate (target: 75-80%)
+
+**Phase 3: Day 5-6** - Hierarchical Classification
+- Add stance family + chamber position heads
+- Train full model (target: 80-85%)
+
+**Phase 4: Day 7** - Deployment Prep
+- ONNX export
+- Integration with existing app
+- Final validation
+
+**What We're SKIPPING Initially (can add later):**
+- Visual stream (MobileNetV3) - adds complexity, marginal gain for MVP
+- ArcFace loss - nice to have but not essential for 80%
+- Hard negative mining - advanced technique for later
+- Temporal smoothing - your app runs inference every 10 min anyway
+
+### Simplified Architecture for MVP
+
+**Stream 1: Basic GCN**
+- 2-layer GATConv (not GATv2)
+- 128 hidden dimensions
+- Global mean pooling (not attention pooling)
+- ~10K parameters (very light)
+
+**Classification: Flat 12-class initially**
+- Skip hierarchical for MVP
+- Add hierarchy once base GCN works
+
+**This should train in <30 minutes on your CPU**
+
+## User Decisions (CONFIRMED)
+
+### 1. Scope: Full Migration (Option A)
+✅ **Replace RF/XGB entirely with GeoPose-Net**
+- Phased approach: Weapon geometry correction first, then GCN
+
+### 2. Implementation: Phased (Option C)
+✅ **Week 1-2**: Weapon geometry correction on current pipeline
+✅ **Week 3-4**: Add GCN classifier
+✅ **Week 5**: Full GeoPose-Net with fusion
+
+### 3. Technical Prerequisites
+✅ **PyTorch**: Not installed, but can install (CPU-only)
+✅ **Hardware**: Intel Core 7 150U @ 1.80 GHz (CPU-only)
+✅ **PyTorch Geometric**: Not installed yet
+✅ **Python**: 3.11.1
+⚠️ **COMPATIBILITY REQUIREMENT**: Must work with existing app via:
+   - `active_model.json` pointer system
+   - `scaler.joblib` for normalization
+   - `label_encoder.joblib` for class encoding
+   - `metadata.json` for model info
+   - `model.joblib` (or equivalent ONNX)
+
+### 4. Data Questions (ANSWERED)
+✅ **12 Arnis poses**: From dataset folder names
+✅ **Handedness**: Mostly right-handed
+✅ **Missing keypoints**: Only in neutral stance
+
+### 5. Success Criteria (DEFINED)
+✅ **Minimum**: 80%
+✅ **Target**: >85%
+✅ **Training time**: 1 hour per session
+✅ **Inference**: Every 10 minutes acceptable (not real-time)
+✅ **Deployment**: Desktop application (ONNX export)
+
+## Application Compatibility Requirements (from APP_FLOW.md)
+
+### Expected Artifacts
+The new model must produce these files to be compatible with `pose_analyzer.py`:
+
+```
+models/v{version}_geopose/
+├── model.joblib              # OR model.onnx for deployment
+├── scaler.joblib             # Feature normalizer (CRITICAL)
+├── label_encoder.joblib      # Class name encoder
+├── metadata.json             # Model info
+└── selected_features.json    # Feature list (optional but helpful)
+```
+
+### Integration Points
+1. **Feature Extraction** (`pose_analyzer.py`):
+   - Must extract SAME features as training (angles + stick vectors)
+   - Uses `scaler.joblib` to normalize features
+   
+2. **Inference** (`video_loop`):
+   - Runs every 8th frame (not real-time requirement)
+   - Returns: `prediction, probability = model.predict(features)`
+   
+3. **Activation** (`model_manager.py`):
+   - Updates `active_model.json` with path to new model
+   - App loads model from that path
+
+### ONNX Deployment Strategy
+Since the new model uses PyTorch, we'll export to ONNX:
+```python
+# After training
+torch.onnx.export(model, dummy_input, "model.onnx")
+
+# App loads with onnxruntime
+import onnxruntime as ort
+session = ort.InferenceSession("model.onnx")
+prediction = session.run(None, {"input": features})
+```
+
+This maintains compatibility while upgrading the architecture.
