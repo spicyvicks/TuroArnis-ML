@@ -1,23 +1,32 @@
 """
 Combined feature extraction: MediaPipe body landmarks + YOLO stick detector
-Extracts 58 body features + 14 stick features = 72 features total (+ class label)
+Extracts 68 body features + 24 stick features = 92 features total (+ class label)
 
-Research notes:
-- Confidence threshold 0.75 per Guo et al. (2017) on neural network calibration
-- Falls back to zeros if stick not detected (ensures consistent feature vector length)
+Body features include:
+- Joint angles (15), cross-body angles (4)
+- Relative positions (22), distances (8)
+- Symmetry (5), proportions (4)
+- Laterality (10) - explicit left/right indicators
+
+Stick features include:
+- Basic: detected, length, angle, positions
+- Strike targets: distance to eyes, crown, chest, solar plexus, knees
+- Direction: normalized stick direction vector
 """
 import cv2
 import numpy as np
-import mediapipe as mp
 import os
 import pandas as pd
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 from ultralytics import YOLO
 import warnings
+
 # confidence thresholds
-STICK_CONFIDENCE_THRESHOLD = 0.75  # Box confidence (Guo et al., 2017)
-KEYPOINT_CONFIDENCE_THRESHOLD = 0.5  # Keypoint confidence
+# NOTE: Lower threshold (0.5) increases detection rate but may include false positives
+# Higher threshold (0.75) is more reliable but misses many valid sticks
+STICK_CONFIDENCE_THRESHOLD = 0.5  # Lowered from 0.75 to improve detection rate (was 27%)
+KEYPOINT_CONFIDENCE_THRESHOLD = 0.3  # Lowered from 0.5
 
 # paths
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +40,8 @@ worker_stick_model = None
 def init_worker():
     """initialize mediapipe pose and yolo stick detector for worker process"""
     global worker_pose_instance, worker_stick_model
+    # Import MediaPipe inside worker to avoid multiprocessing issues on Windows
+    import mediapipe as mp
     worker_pose_instance = mp.solutions.pose.Pose(
         static_image_mode=True,
         model_complexity=2,
@@ -134,29 +145,52 @@ def extract_body_features(lm):
     
     proportions = [arm_span, body_height, arm_to_height_ratio, stance_depth]
     
-    # combine all 58 body features
+    # ===== LATERALITY FEATURES (10) - explicit left/right indicators =====
+    # Which side is more extended/active? (positive = right side dominant)
+    dominant_arm = 1.0 if right_arm_extension > left_arm_extension else 0.0
+    dominant_elbow_height = 1.0 if lm[14].y < lm[13].y else 0.0  # Higher elbow (lower y = higher)
+    dominant_wrist_forward = 1.0 if lm[16].z < lm[15].z else 0.0  # More forward (lower z)
+    dominant_hand_height = 1.0 if lm[20].y < lm[19].y else 0.0
+    
+    # Absolute position indicators (which side of body center)
+    body_center_x = (lm[11].x + lm[12].x + lm[23].x + lm[24].x) / 4
+    left_wrist_side = lm[15].x - body_center_x  # Negative = left of center
+    right_wrist_side = lm[16].x - body_center_x  # Positive = right of center
+    active_wrist_x = right_wrist_side - left_wrist_side  # Which wrist is further from center
+    
+    # Elbow position relative to shoulder (tucked vs extended)
+    left_elbow_tucked = abs(lm[13].x - lm[11].x)  # Small = tucked
+    right_elbow_tucked = abs(lm[14].x - lm[12].x)
+    
+    laterality = [dominant_arm, dominant_elbow_height, dominant_wrist_forward, 
+                  dominant_hand_height, active_wrist_x, left_wrist_side, right_wrist_side,
+                  left_elbow_tucked, right_elbow_tucked, 
+                  right_arm_extension - left_arm_extension]  # Signed difference
+    
+    # combine all 68 body features (was 58, added 10 laterality)
     features = (angles + cross_body_angles + 
                left_wrist_rel + right_wrist_rel +
                left_hand_rel + right_hand_rel +
                left_foot_rel + right_foot_rel +
                [shoulder_tilt, hip_tilt, stance_width, facing_direction] +
-               distances + symmetry + proportions)
+               distances + symmetry + proportions + laterality)
     
     return features
 
 def extract_stick_features(image, lm_px, img_w, img_h, body_height):
-    """Extract 14 stick features from YOLO detection.
+    """Extract 24 stick features from YOLO detection (expanded from 14).
     
-    Uses research-backed confidence thresholds:
-    - Box confidence >= 0.75 (Guo et al., 2017)
-    - Keypoint confidence >= 0.5
+    New features focus on:
+    - Stick position relative to strike targets (eyes, temples, chest, knees)
+    - Stick trajectory/direction indicators
+    - Quadrant-based positioning
     
     Returns zeros if no valid stick detected (maintains consistent feature vector).
     """
     global worker_stick_model
     
-    # default zeros if no stick detected
-    zero_features = [0.0] * 14
+    # default zeros if no stick detected (24 features now)
+    zero_features = [0.0] * 24
     
     if worker_stick_model is None:
         return zero_features
@@ -176,7 +210,7 @@ def extract_stick_features(image, lm_px, img_w, img_h, body_height):
             kpts = result.keypoints[best_idx]
             
             stick_conf = box.conf.item()
-            if stick_conf < STICK_CONFIDENCE_THRESHOLD:  # Research-backed threshold
+            if stick_conf < STICK_CONFIDENCE_THRESHOLD:
                 continue
             
             kpts_data = kpts.data[0].cpu().numpy()
@@ -189,15 +223,16 @@ def extract_stick_features(image, lm_px, img_w, img_h, body_height):
             if grip_conf < KEYPOINT_CONFIDENCE_THRESHOLD or tip_conf < KEYPOINT_CONFIDENCE_THRESHOLD:
                 continue
             
-            # calculate stick features
+            # ===== BASIC FEATURES (original) =====
             stick_detected = 1.0
             
             # stick length normalized to body height
             stick_length_px = np.sqrt((tip_x - grip_x)**2 + (tip_y - grip_y)**2)
             stick_length_norm = stick_length_px / (body_height * img_h + 0.001)
             
-            # stick angle
-            stick_angle = np.degrees(np.arctan2(tip_y - grip_y, tip_x - grip_x))
+            # stick angle (-180 to 180)
+            stick_angle_raw = np.degrees(np.arctan2(tip_y - grip_y, tip_x - grip_x))
+            stick_angle = stick_angle_raw / 180.0  # Normalize to -1 to 1
             
             # normalized positions
             grip_x_norm = grip_x / img_w
@@ -205,36 +240,81 @@ def extract_stick_features(image, lm_px, img_w, img_h, body_height):
             tip_x_norm = tip_x / img_w
             tip_y_norm = tip_y / img_h
             
-            # distance to wrists (pixels)
+            # ===== HOLDING HAND FEATURES =====
             left_wrist_px = (lm_px[15].x * img_w, lm_px[15].y * img_h)
             right_wrist_px = (lm_px[16].x * img_w, lm_px[16].y * img_h)
             
             dist_to_left = np.sqrt((grip_x - left_wrist_px[0])**2 + (grip_y - left_wrist_px[1])**2)
             dist_to_right = np.sqrt((grip_x - right_wrist_px[0])**2 + (grip_y - right_wrist_px[1])**2)
             
-            # normalize to image diagonal
             img_diag = np.sqrt(img_w**2 + img_h**2)
             grip_to_holding_wrist = min(dist_to_left, dist_to_right) / img_diag
             holding_hand = 0.0 if dist_to_left < dist_to_right else 1.0
             
-            # tip relative to body
-            shoulder_y = (lm_px[11].y + lm_px[12].y) / 2
-            hip_x = (lm_px[23].x + lm_px[24].x) / 2
-            hip_y = (lm_px[23].y + lm_px[24].y) / 2
+            # ===== TIP RELATIVE TO BODY LANDMARKS =====
+            # Key body landmarks for strike targets
+            left_eye = (lm_px[2].x, lm_px[2].y)
+            right_eye = (lm_px[5].x, lm_px[5].y)
+            nose = (lm_px[0].x, lm_px[0].y)
+            left_shoulder = (lm_px[11].x, lm_px[11].y)
+            right_shoulder = (lm_px[12].x, lm_px[12].y)
+            left_hip = (lm_px[23].x, lm_px[23].y)
+            right_hip = (lm_px[24].x, lm_px[24].y)
+            left_knee = (lm_px[25].x, lm_px[25].y)
+            right_knee = (lm_px[26].x, lm_px[26].y)
             
-            tip_vs_shoulder_y = tip_y_norm - shoulder_y
-            tip_vs_hip_x = tip_x_norm - hip_x
-            tip_vs_hip_y = tip_y_norm - hip_y
+            # Center points
+            shoulder_center = ((left_shoulder[0] + right_shoulder[0])/2, 
+                              (left_shoulder[1] + right_shoulder[1])/2)
+            hip_center = ((left_hip[0] + right_hip[0])/2, 
+                         (left_hip[1] + right_hip[1])/2)
+            chest_center = ((shoulder_center[0] + hip_center[0])/2,
+                           (shoulder_center[1]*0.7 + hip_center[1]*0.3))  # Closer to shoulders
             
-            # average keypoint confidence
+            # Original tip-relative features
+            tip_vs_shoulder_y = tip_y_norm - shoulder_center[1]
+            tip_vs_hip_x = tip_x_norm - hip_center[0]
+            tip_vs_hip_y = tip_y_norm - hip_center[1]
+            
+            # ===== NEW: STRIKE TARGET DISTANCES =====
+            # Distance from tip to each strike target (normalized)
+            tip_to_left_eye = np.sqrt((tip_x_norm - left_eye[0])**2 + (tip_y_norm - left_eye[1])**2)
+            tip_to_right_eye = np.sqrt((tip_x_norm - right_eye[0])**2 + (tip_y_norm - right_eye[1])**2)
+            tip_to_crown = np.sqrt((tip_x_norm - nose[0])**2 + (tip_y_norm - (nose[1] - 0.1))**2)  # Above head
+            tip_to_chest = np.sqrt((tip_x_norm - chest_center[0])**2 + (tip_y_norm - chest_center[1])**2)
+            tip_to_solar = np.sqrt((tip_x_norm - hip_center[0])**2 + (tip_y_norm - (shoulder_center[1]*0.4 + hip_center[1]*0.6))**2)
+            tip_to_left_knee = np.sqrt((tip_x_norm - left_knee[0])**2 + (tip_y_norm - left_knee[1])**2)
+            tip_to_right_knee = np.sqrt((tip_x_norm - right_knee[0])**2 + (tip_y_norm - right_knee[1])**2)
+            
+            # ===== NEW: STICK DIRECTION RELATIVE TO BODY =====
+            # Is stick pointing left, right, up, or down relative to body center?
+            body_center_x = (shoulder_center[0] + hip_center[0]) / 2
+            body_center_y = (shoulder_center[1] + hip_center[1]) / 2
+            
+            stick_dir_x = tip_x_norm - grip_x_norm  # Positive = pointing right
+            stick_dir_y = tip_y_norm - grip_y_norm  # Positive = pointing down
+            
+            # Normalize direction to unit length
+            dir_mag = np.sqrt(stick_dir_x**2 + stick_dir_y**2) + 0.001
+            stick_dir_x_norm = stick_dir_x / dir_mag
+            stick_dir_y_norm = stick_dir_y / dir_mag
+            
+            # Confidence values
             keypoint_conf = (grip_conf + tip_conf) / 2
             
             return [
+                # Original 14 features
                 stick_detected, stick_length_norm, stick_angle,
                 grip_x_norm, grip_y_norm, tip_x_norm, tip_y_norm,
                 grip_to_holding_wrist, holding_hand,
                 tip_vs_shoulder_y, tip_vs_hip_x, tip_vs_hip_y,
-                stick_conf, keypoint_conf
+                stick_conf, keypoint_conf,
+                # NEW 10 features for strike targets
+                tip_to_left_eye, tip_to_right_eye, tip_to_crown,
+                tip_to_chest, tip_to_solar,
+                tip_to_left_knee, tip_to_right_knee,
+                stick_dir_x_norm, stick_dir_y_norm,
+                body_center_y - tip_y_norm  # How high is tip relative to body center
             ]
         
         return zero_features
@@ -314,15 +394,24 @@ def get_feature_header():
                      'arm_raise_symmetry', 'wrist_height_diff']
     # 4 body proportions
     proportion_names = ['arm_span', 'body_height', 'arm_to_height_ratio', 'stance_depth']
-    # 14 stick features
+    # 10 laterality features (left/right differentiation)
+    laterality_names = ['dominant_arm', 'dominant_elbow_height', 'dominant_wrist_forward',
+                        'dominant_hand_height', 'active_wrist_x', 'left_wrist_side', 'right_wrist_side',
+                        'left_elbow_tucked', 'right_elbow_tucked', 'arm_ext_diff']
+    # 24 stick features (expanded from 14)
     stick_names = ['stick_detected', 'stick_length_norm', 'stick_angle',
                   'grip_x_norm', 'grip_y_norm', 'tip_x_norm', 'tip_y_norm',
                   'grip_to_holding_wrist', 'holding_hand',
                   'tip_vs_shoulder_y', 'tip_vs_hip_x', 'tip_vs_hip_y',
-                  'stick_conf', 'keypoint_conf']
+                  'stick_conf', 'keypoint_conf',
+                  # NEW strike target features
+                  'tip_to_left_eye', 'tip_to_right_eye', 'tip_to_crown',
+                  'tip_to_chest', 'tip_to_solar',
+                  'tip_to_left_knee', 'tip_to_right_knee',
+                  'stick_dir_x', 'stick_dir_y', 'tip_height_vs_body']
     
     header = (['class'] + angle_names + cross_body_names + position_names + 
-              distance_names + symmetry_names + proportion_names + stick_names)
+              distance_names + symmetry_names + proportion_names + laterality_names + stick_names)
     return header
 
 def extract_features_from_dataset(dataset_path, csv_output_path):
@@ -330,7 +419,7 @@ def extract_features_from_dataset(dataset_path, csv_output_path):
     print(f"\n[STAGE 1] Extracting COMBINED features (body + stick)...")
     
     header = get_feature_header()
-    print(f"  Feature count: {len(header) - 1} (58 body + 14 stick)")
+    print(f"  Feature count: {len(header) - 1} (68 body + 24 stick)")
     
     # check stick model exists
     if not os.path.exists(STICK_MODEL_PATH):
@@ -363,8 +452,8 @@ def extract_features_from_dataset(dataset_path, csv_output_path):
     # filter out failed extractions
     valid_results = [r for r in results if r is not None]
     
-    # count stick detections
-    stick_detected_count = sum(1 for r in valid_results if r[-14] == 1.0)  # stick_detected is 14th from end
+    # count stick detections (stick_detected is 24th from end)
+    stick_detected_count = sum(1 for r in valid_results if r[-24] == 1.0)
     
     print(f"  Extracted: {len(valid_results)}/{len(image_tasks)} images")
     print(f"  Stick detected: {stick_detected_count}/{len(valid_results)} ({100*stick_detected_count/max(1,len(valid_results)):.1f}%)")

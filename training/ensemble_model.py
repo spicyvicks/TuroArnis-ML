@@ -96,6 +96,14 @@ class EnsembleClassifier:
         print(f"  LOADING ENSEMBLE MODELS ({self.voting.upper()} VOTING)")
         print(f"{'='*60}")
         
+        # First pass: check expected feature count from CSV
+        csv_path = os.path.join(project_root, 'features_train.csv')
+        expected_feature_count = None
+        if os.path.exists(csv_path):
+            df_temp = pd.read_csv(csv_path, nrows=0)
+            expected_feature_count = len([col for col in df_temp.columns if col != 'class'])
+            print(f"\n[INFO] Current CSV has {expected_feature_count} features")
+        
         for version_name in model_versions:
             version_path = os.path.join(MODELS_DIR, version_name)
             metadata_path = os.path.join(version_path, 'metadata.json')
@@ -107,7 +115,20 @@ class EnsembleClassifier:
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
             
+            # Check if model's scaler is compatible with current feature count
+            model_n_features = metadata.get('n_features_in')
+            if expected_feature_count and model_n_features and model_n_features != expected_feature_count:
+                print(f"[SKIP] {version_name}: trained on {model_n_features} features, CSV has {expected_feature_count}")
+                continue
+            
             model_type = metadata.get('model_type', 'dnn')
+            
+            # Load selected features if available (for feature selection during training)
+            selected_features = None
+            selected_features_path = os.path.join(version_path, 'selected_features.json')
+            if os.path.exists(selected_features_path):
+                with open(selected_features_path, 'r') as f:
+                    selected_features = json.load(f)
             
             if model_type == 'dnn':
                 model_path = os.path.join(version_path, 'model.keras')
@@ -145,12 +166,14 @@ class EnsembleClassifier:
             self.model_info.append({
                 'name': version_name,
                 'type': model_type,
-                'accuracy': metadata.get('test_accuracy', 0)
+                'accuracy': metadata.get('test_accuracy', 0),
+                'selected_features': selected_features  # Store for feature selection during prediction
             })
             
             if self.verbose:
                 acc = metadata.get('test_accuracy', 0) * 100
-                print(f"  ✓ Loaded {version_name} ({model_type.upper()}) - Accuracy: {acc:.2f}%")
+                num_features = len(selected_features) if selected_features else "all"
+                print(f"  ✓ Loaded {version_name} ({model_type.upper()}) - Accuracy: {acc:.2f}% - Features: {num_features}")
         
         print(f"{'='*60}")
         print(f"  Total models loaded: {len(self.models)}")
@@ -166,20 +189,69 @@ class EnsembleClassifier:
         # Scale features
         X_scaled = self.scaler.transform(X)
         
+        # Get all feature names from the CSV (assumes feature_names are columns of input)
+        # For this to work, we need to track feature names globally or pass them
+        
         # Collect probabilities from all models
         all_probas = []
         
         for i, model in enumerate(self.models):
             model_type = self.model_info[i]['type']
+            model_name = self.model_info[i]['name']
+            selected_features = self.model_info[i].get('selected_features')
             
-            if model_type == 'dnn':
-                # DNN outputs probabilities directly
-                proba = model.predict(X_scaled, verbose=0)
+            # Apply feature selection if model was trained with it
+            if selected_features:
+                # Get feature indices from the CSV column names
+                # We need to match feature names to indices
+                # For now, assume selected_features is a list of feature names
+                # and X_scaled columns match the order in features_train.csv
+                
+                # Load feature names from CSV header (should be cached but let's be safe)
+                csv_path = os.path.join(project_root, 'features_train.csv')
+                if os.path.exists(csv_path):
+                    df_temp = pd.read_csv(csv_path, nrows=0)  # Just get headers
+                    all_feature_names = [col for col in df_temp.columns if col != 'class']
+                    
+                    # Find indices of selected features (with validation)
+                    selected_indices = []
+                    missing_features = []
+                    for fname in selected_features:
+                        if fname in all_feature_names:
+                            selected_indices.append(all_feature_names.index(fname))
+                        else:
+                            missing_features.append(fname)
+                    
+                    if missing_features:
+                        print(f"[WARN] Model {model_name}: {len(missing_features)} features not found in CSV")
+                        if len(selected_indices) == 0:
+                            print(f"[ERROR] No valid features for {model_name}, using all features")
+                            X_model = X_scaled
+                        else:
+                            X_model = X_scaled[:, selected_indices]
+                    else:
+                        X_model = X_scaled[:, selected_indices]
+                else:
+                    # Fallback: use all features
+                    print(f"[WARN] CSV not found, using all features for {model_name}")
+                    X_model = X_scaled
             else:
-                # Random Forest and XGBoost both have predict_proba method
-                proba = model.predict_proba(X_scaled)
+                X_model = X_scaled
             
-            all_probas.append(proba)
+            try:
+                if model_type == 'dnn':
+                    # DNN outputs probabilities directly
+                    proba = model.predict(X_model, verbose=0)
+                else:
+                    # Random Forest and XGBoost both have predict_proba method
+                    proba = model.predict_proba(X_model)
+                
+                all_probas.append(proba)
+            except Exception as e:
+                print(f"[ERROR] Model {model_name} prediction failed: {e}")
+                print(f"  X_model shape: {X_model.shape}")
+                print(f"  Selected features: {len(selected_features) if selected_features else 'None'}")
+                raise
         
         # Weight and average
         all_probas = np.array(all_probas)  # Shape: (n_models, n_samples, n_classes)
@@ -324,31 +396,44 @@ def evaluate_ensemble(csv_path=None, model_versions=None, voting='soft', weights
 
 
 def optimize_ensemble_weights(csv_path=None, model_versions=None, voting='soft'):
-    # Default CSV path
-    if csv_path is None:
-        csv_path = os.path.join(project_root, 'features_val.csv')
-
+    """Optimize ensemble weights using available data.
+    
+    Note: Uses features_train.csv for optimization since this project doesn't
+    create a separate validation set (uses train/test split only).
+    """
     print(f"\n{'='*60}")
     print(f"  OPTIMIZING ENSEMBLE WEIGHTS")
     print(f"{'='*60}\n")
     
-    print(f"[INFO] Loading validation and test data...")
-    val_path = os.path.join(project_root, 'features_val.csv')
+    print(f"[INFO] Loading train and test data...")
+    train_path = os.path.join(project_root, 'features_train.csv')
     test_path = os.path.join(project_root, 'features_test.csv')
     
-    if not os.path.exists(val_path) or not os.path.exists(test_path):
-        print(f"[ERROR] CSV files not found. Run run_extraction.py first.")
+    if not os.path.exists(train_path):
+        print(f"[ERROR] features_train.csv not found. Run: python training/run_extraction.py")
         return None, 0, None
-        
-    df_val = pd.read_csv(val_path)
-    X_val = df_val.drop('class', axis=1).values
-    y_val = df_val['class'].values
+    
+    if not os.path.exists(test_path):
+        print(f"[WARN] features_test.csv not found, using train data only.")
+        test_path = train_path
+    
+    # Use train set for weight optimization (with internal cross-validation)
+    df_train = pd.read_csv(train_path)
+    X_train = df_train.drop('class', axis=1).values
+    y_train = df_train['class'].values
+    
+    # Split train into optimization and validation subsets
+    from sklearn.model_selection import train_test_split
+    X_opt, X_val, y_opt, y_val = train_test_split(
+        X_train, y_train, test_size=0.2, random_state=42, stratify=y_train
+    )
     
     df_test = pd.read_csv(test_path)
     X_test = df_test.drop('class', axis=1).values
     y_test = df_test['class'].values
     
-    print(f"[INFO] Val: {len(X_val)}, Test: {len(X_test)} samples\n")
+    print(f"[INFO] Optimization: {len(X_opt)}, Validation: {len(X_val)}, Test: {len(X_test)} samples")
+    print(f"[INFO] Using 80/20 split of training data for weight optimization\n")
     
     # Create base ensemble to get model list
     base_ensemble = EnsembleClassifier(
@@ -410,20 +495,54 @@ def optimize_ensemble_weights(csv_path=None, model_versions=None, voting='soft')
     print(f"  OPTIMIZATION RESULTS")
     print(f"{'='*60}\n")
     print(f"Best weights: {[f'{w:.2f}' for w in best_weights]}")
-    print(f"Validation accuracy: {best_val_acc*100:.2f}%\n")
+    print(f"Validation accuracy: {best_val_acc*100:.2f}% (on 20% of TRAIN data)")
+    if best_val_acc > 0.90:
+        print(f"[WARN] Very high val accuracy - check for overfitting on test set!\n")
     
     # Test with optimal weights
-    final_ensemble = EnsembleClassifier(
-        model_versions=model_versions,
-        voting=voting,
-        weights=list(best_weights),
-        verbose=False
-    )
+    print(f"\n{'='*60}")
+    print(f"  TESTING ON HELD-OUT TEST SET")
+    print(f"{'='*60}")
     
-    test_acc, _, test_report = final_ensemble.evaluate(X_test, y_test)
-    
-    print(f"\n📊 TEST ACCURACY (optimized): {test_acc*100:.2f}%\n")
-    print(f"{'='*60}\n")
+    try:
+        final_ensemble = EnsembleClassifier(
+            model_versions=model_versions,
+            voting=voting,
+            weights=list(best_weights),
+            verbose=False
+        )
+        
+        print(f"[DEBUG] Running test evaluation...")
+        test_acc, test_preds, test_report = final_ensemble.evaluate(X_test, y_test)
+        
+        print(f"\n📊 TEST ACCURACY (optimized): {test_acc*100:.2f}%")
+        
+        # Show individual model accuracies for comparison
+        print(f"\n{'='*60}")
+        print(f"  INDIVIDUAL MODEL PERFORMANCE")
+        print(f"{'='*60}")
+        for i, info in enumerate(final_ensemble.model_info):
+            try:
+                # Quick individual test
+                print(f"[DEBUG] Testing {info['name']}...")
+                temp_ensemble = EnsembleClassifier(
+                    model_versions=[info['name']],
+                    voting='soft',
+                    weights=[1.0],
+                    verbose=False
+                )
+                ind_acc, _, _ = temp_ensemble.evaluate(X_test, y_test)
+                print(f"  {info['name']}: {ind_acc*100:.2f}%")
+            except Exception as e:
+                print(f"  {info['name']}: ERROR - {e}")
+        
+        print(f"{'='*60}\n")
+        
+    except Exception as e:
+        print(f"[ERROR] Test evaluation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, 0, None
     
     return list(best_weights), test_acc, final_ensemble
 

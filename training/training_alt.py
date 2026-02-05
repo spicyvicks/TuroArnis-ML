@@ -70,8 +70,12 @@ def get_next_version(models_dir):
             pass
     return max(versions) + 1 if versions else 1
 
-def load_and_prepare_data():
-    """Load data from train and test CSVs (validation omitted for RF/XGB)"""
+def load_and_prepare_data(use_cross_validation=False):
+    """Load data from train and test CSVs.
+    
+    Args:
+        use_cross_validation: If True, combines train+test for cross-validation
+    """
     print("  Loading CSVs...")
     if not os.path.exists(csv_train_file):
         print(f"[ERROR] Missing {csv_train_file}. Run run_extraction.py first.")
@@ -93,39 +97,93 @@ def load_and_prepare_data():
         X = df.drop('class', axis=1).values
         y = le.transform(df['class'].values)
         return X, y
+    
+    if use_cross_validation:
+        # Combine train + test for cross-validation
+        combined = pd.concat([train, test], ignore_index=True)
+        X_all, y_all = prep(combined)
+        print(f"  Combined data: {len(X_all)} samples | Features: {len(feature_names)}")
+        print(f"  Using 5-fold stratified cross-validation")
         
-    X_train, y_train = prep(train)
-    X_test, y_test = prep(test)
-    
-    print(f"  Train: {len(X_train)} | Test: {len(X_test)} | Features: {len(feature_names)}")
-    
-    # Scale
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
-    
-    return (X_train, y_train), (X_test, y_test), scaler, le, class_names, feature_names
+        # Scale all data
+        scaler = StandardScaler()
+        X_all = scaler.fit_transform(X_all)
+        
+        # Return None for test set to indicate CV mode
+        return (X_all, y_all), (None, None), scaler, le, class_names, feature_names
+    else:
+        X_train, y_train = prep(train)
+        X_test, y_test = prep(test)
+        
+        print(f"  Train: {len(X_train)} | Test: {len(X_test)} | Features: {len(feature_names)}")
+        
+        # Scale
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_test = scaler.transform(X_test)
+        
+        return (X_train, y_train), (X_test, y_test), scaler, le, class_names, feature_names
 
-def select_features(X_train, y_train, X_test, feature_names, keep_ratio=0.6):
-    """Auto-select top features using RF importance. Returns reduced X and selected feature info."""
+def select_features(X_train, y_train, X_test, feature_names, keep_ratio=0.6, protect_stick=True):
+    """Auto-select top features using RF importance. Returns reduced X and selected feature info.
+    
+    Args:
+        protect_stick: If True, stick features are always kept regardless of importance.
+    """
     print("\n  [STEP 1] AUTO-FEATURE SELECTION")
     print(f"  Original features: {len(feature_names)}")
+    
+    # Protected stick features (always kept regardless of importance)
+    PROTECTED_STICK_FEATURES = [
+        'stick_detected', 'stick_length_norm', 'stick_angle',
+        'grip_x_norm', 'grip_y_norm', 'tip_x_norm', 'tip_y_norm',
+        'grip_to_holding_wrist', 'holding_hand',
+        'tip_vs_shoulder_y', 'tip_vs_hip_x', 'tip_vs_hip_y',
+        'stick_conf', 'keypoint_conf',
+        # Strike target features
+        'tip_to_left_eye', 'tip_to_right_eye', 'tip_to_crown',
+        'tip_to_chest', 'tip_to_solar',
+        'tip_to_left_knee', 'tip_to_right_knee',
+        'stick_dir_x', 'stick_dir_y', 'tip_height_vs_body',
+        # Laterality features (critical for left/right differentiation)
+        'dominant_arm', 'dominant_elbow_height', 'dominant_wrist_forward',
+        'dominant_hand_height', 'active_wrist_x', 'arm_ext_diff'
+    ]
+    
+    # Find indices of protected features (only if protect_stick is enabled)
+    protected_indices = set()
+    if protect_stick:
+        for i, name in enumerate(feature_names):
+            if name in PROTECTED_STICK_FEATURES:
+                protected_indices.add(i)
+        print(f"  Protected stick features: {len(protected_indices)}")
+    else:
+        print(f"  Stick feature protection: DISABLED")
     
     # Quick RF to get importances
     quick_rf = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1)
     quick_rf.fit(X_train, y_train)
     
     importances = quick_rf.feature_importances_
-    n_keep = max(10, int(len(feature_names) * keep_ratio))  # Keep at least 10 features
     
-    # Get indices of top features
-    top_indices = np.argsort(importances)[::-1][:n_keep]
-    top_indices_sorted = np.sort(top_indices)  # Keep original order for consistency
+    # Calculate how many non-protected features to keep
+    n_non_protected = len(feature_names) - len(protected_indices)
+    n_keep_non_protected = max(10, int(n_non_protected * keep_ratio))
+    
+    # Get indices of top non-protected features
+    non_protected_indices = [i for i in range(len(feature_names)) if i not in protected_indices]
+    non_protected_importances = [(i, importances[i]) for i in non_protected_indices]
+    non_protected_importances.sort(key=lambda x: x[1], reverse=True)
+    top_non_protected = set([idx for idx, _ in non_protected_importances[:n_keep_non_protected]])
+    
+    # Combine protected + top non-protected
+    final_indices = protected_indices | top_non_protected
+    final_indices_sorted = np.sort(list(final_indices))
     
     # Select features
-    X_train_sel = X_train[:, top_indices_sorted]
-    X_test_sel = X_test[:, top_indices_sorted]
-    selected_names = [feature_names[i] for i in top_indices_sorted]
+    X_train_sel = X_train[:, final_indices_sorted]
+    X_test_sel = X_test[:, final_indices_sorted]
+    selected_names = [feature_names[i] for i in final_indices_sorted]
     
     # Build importance ranking for all features (for visualization)
     all_importance_data = []
@@ -133,44 +191,66 @@ def select_features(X_train, y_train, X_test, feature_names, keep_ratio=0.6):
         all_importance_data.append({
             'feature': name,
             'importance': float(imp),
-            'selected': i in top_indices_sorted,
+            'selected': i in final_indices_sorted,
+            'protected': i in protected_indices,
             'rank': int(np.where(np.argsort(importances)[::-1] == i)[0][0]) + 1
         })
     
-    # Show dropped features
-    dropped_count = len(feature_names) - n_keep
-    print(f"  Kept: {n_keep} | Dropped: {dropped_count} (bottom {100-int(keep_ratio*100)}%)")
+    # Show summary
+    dropped_count = len(feature_names) - len(final_indices_sorted)
+    print(f"  Kept: {len(final_indices_sorted)} ({len(protected_indices)} protected + {len(top_non_protected)} by importance)")
+    print(f"  Dropped: {dropped_count} (bottom {100-int(keep_ratio*100)}% of non-protected)")
     
     # Show top 5 kept and bottom 5 dropped
     sorted_by_imp = sorted(all_importance_data, key=lambda x: x['importance'], reverse=True)
-    print("  Top 5 kept:")
+    print("  Top 5 by importance:")
     for f in sorted_by_imp[:5]:
-        print(f"    - {f['feature']}: {f['importance']:.4f}")
+        prot = " [PROTECTED]" if f['protected'] else ""
+        print(f"    - {f['feature']}: {f['importance']:.4f}{prot}")
     print("  Bottom 5 dropped:")
-    for f in sorted_by_imp[-5:]:
-        if not f['selected']:
-            print(f"    - {f['feature']}: {f['importance']:.4f}")
+    dropped_features = [f for f in sorted_by_imp if not f['selected']]
+    for f in dropped_features[-5:]:
+        print(f"    - {f['feature']}: {f['importance']:.4f}")
     
     return X_train_sel, X_test_sel, selected_names, all_importance_data
 
-def train_random_forest(data_pack, use_feature_selection=True, keep_ratio=0.6):
+def train_random_forest(data_pack, use_feature_selection=True, keep_ratio=0.6, protect_stick=True, use_cv=False, hybrid_mode=False):
     (X_train, y_train), (X_test, y_test), scaler, le, class_names, feature_names = data_pack
     
     print("\n" + "="*50)
     print("  RANDOM FOREST TRAINING")
+    if use_cv:
+        print("  Mode: CROSS-VALIDATION (5-fold on all data)")
+    elif hybrid_mode:
+        print("  Mode: HYBRID (CV on train + held-out test)")
+    else:
+        print("  Mode: TRAIN/TEST SPLIT")
     print("="*50)
+    
+    # Store original feature count
+    n_features_original = X_train.shape[1]
     
     # Feature Selection Step
     all_importance_data = None
     selected_feature_names = feature_names
+    X_selected = X_train
+    X_test_selected = X_test
     if use_feature_selection and len(feature_names) > 15:
-        X_train, X_test, selected_feature_names, all_importance_data = select_features(
-            X_train, y_train, X_test, feature_names, keep_ratio
-        )
+        if use_cv:
+            # CV mode: select on all data
+            X_selected, _, selected_feature_names, all_importance_data = select_features(
+                X_train, y_train, X_train, feature_names, keep_ratio, protect_stick
+            )
+        else:
+            # Split or hybrid mode: select on train, apply to test
+            X_train, X_test_selected, selected_feature_names, all_importance_data = select_features(
+                X_train, y_train, X_test, feature_names, keep_ratio, protect_stick
+            )
+            X_selected = X_train
     
     print(f"\n  [STEP 2] GRID/RANDOM SEARCH (on {len(selected_feature_names)} features)")
     
-    from sklearn.model_selection import RandomizedSearchCV
+    from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold, cross_val_score
     
     rf_base = RandomForestClassifier(random_state=42, n_jobs=-1, class_weight='balanced')
     
@@ -193,13 +273,16 @@ def train_random_forest(data_pack, use_feature_selection=True, keep_ratio=0.6):
     global _progress_tracker
     _progress_tracker = GridSearchProgress(total_fits, desc="RF Random Search")
     
+    # Use stratified k-fold for consistency
+    skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    
     grid_search = RandomizedSearchCV(
-        rf_base, param_grid, n_iter=n_iter, cv=cv_folds, scoring=_scoring_with_progress, 
+        rf_base, param_grid, n_iter=n_iter, cv=skf, scoring=_scoring_with_progress, 
         n_jobs=2, verbose=0, random_state=42
     )
     
     try:
-        grid_search.fit(X_train, y_train)
+        grid_search.fit(X_selected, y_train)
     finally:
         _progress_tracker.close()
         _progress_tracker = None
@@ -209,9 +292,45 @@ def train_random_forest(data_pack, use_feature_selection=True, keep_ratio=0.6):
     
     model = grid_search.best_estimator_
     
-    # Evaluate on pure Test set
-    test_acc = accuracy_score(y_test, model.predict(X_test))
-    print(f"  Test Acc:    {test_acc:.2%}")
+    # Final evaluation
+    if use_cv:
+        # For CV mode, do a final 5-fold cross-validation with the best model
+        print("\n  [STEP 3] FINAL CROSS-VALIDATION (5-fold)")
+        final_cv_scores = cross_val_score(model, X_selected, y_train, cv=skf, n_jobs=-1)
+        cv_acc = final_cv_scores.mean()
+        cv_std = final_cv_scores.std()
+        print(f"  CV Accuracy:  {cv_acc:.2%} ± {cv_std:.2%}")
+        print(f"  Fold scores:  {[f'{s:.2%}' for s in final_cv_scores]}")
+        
+        # Train final model on ALL data
+        print("\n  [STEP 4] TRAINING FINAL MODEL ON ALL DATA")
+        model.fit(X_selected, y_train)
+        test_acc = cv_acc  # Use CV accuracy as the reported accuracy
+    elif hybrid_mode:
+        # HYBRID: CV on training data + final evaluation on held-out test
+        print("\n  [STEP 3] CROSS-VALIDATION ON TRAINING DATA (5-fold)")
+        final_cv_scores = cross_val_score(model, X_selected, y_train, cv=skf, n_jobs=-1)
+        cv_acc = final_cv_scores.mean()
+        cv_std = final_cv_scores.std()
+        print(f"  CV Accuracy:  {cv_acc:.2%} ± {cv_std:.2%}")
+        print(f"  Fold scores:  {[f'{s:.2%}' for s in final_cv_scores]}")
+        
+        # Evaluate on held-out test set
+        print("\n  [STEP 4] HELD-OUT TEST SET EVALUATION")
+        if X_test_selected is not None and len(X_test_selected) > 0:
+            test_acc = accuracy_score(y_test, model.predict(X_test_selected))
+            print(f"  Test Acc:     {test_acc:.2%} (on {len(y_test)} held-out samples)")
+            print(f"\n  📊 SUMMARY:")
+            print(f"     CV Accuracy (reliable):  {cv_acc:.2%} ± {cv_std:.2%}")
+            print(f"     Test Accuracy (verify):  {test_acc:.2%}")
+            # Use CV accuracy as the primary metric (more reliable)
+            test_acc = cv_acc
+        else:
+            test_acc = cv_acc
+    else:
+        # Traditional train/test split evaluation
+        test_acc = accuracy_score(y_test, model.predict(X_test_selected if use_feature_selection else X_test))
+        print(f"  Test Acc:    {test_acc:.2%}")
     
     # Show top 10 features from final model
     if hasattr(model, 'feature_importances_'):
@@ -232,28 +351,45 @@ def train_random_forest(data_pack, use_feature_selection=True, keep_ratio=0.6):
     save_model(
         model, scaler, le, class_names, test_acc, 'random_forest', 
         grid_search.best_params_, selected_feature_names,
-        all_importance_data, final_importance_data
+        all_importance_data, final_importance_data, n_features_original
     )
 
-def train_xgboost(data_pack, use_feature_selection=True, keep_ratio=0.6):
+def train_xgboost(data_pack, use_feature_selection=True, keep_ratio=0.6, protect_stick=True, use_cv=False, hybrid_mode=False):
     if not HAS_XGBOOST: return
     (X_train, y_train), (X_test, y_test), scaler, le, class_names, feature_names = data_pack
 
     print("\n" + "="*50)
     print("  XGBOOST TRAINING")
+    if use_cv:
+        print("  Mode: CROSS-VALIDATION (5-fold on all data)")
+    elif hybrid_mode:
+        print("  Mode: HYBRID (CV on train + held-out test)")
+    else:
+        print("  Mode: TRAIN/TEST SPLIT")
     print("="*50)
+    
+    # Store original feature count
+    n_features_original = X_train.shape[1]
     
     # Feature Selection Step
     all_importance_data = None
     selected_feature_names = feature_names
+    X_selected = X_train
+    X_test_selected = X_test
     if use_feature_selection and len(feature_names) > 15:
-        X_train, X_test, selected_feature_names, all_importance_data = select_features(
-            X_train, y_train, X_test, feature_names, keep_ratio
-        )
+        if use_cv:
+            X_selected, _, selected_feature_names, all_importance_data = select_features(
+                X_train, y_train, X_train, feature_names, keep_ratio, protect_stick
+            )
+        else:
+            X_train, X_test_selected, selected_feature_names, all_importance_data = select_features(
+                X_train, y_train, X_test, feature_names, keep_ratio, protect_stick
+            )
+            X_selected = X_train
     
     print(f"\n  [STEP 2] RANDOM SEARCH (on {len(selected_feature_names)} features)")
     
-    from sklearn.model_selection import RandomizedSearchCV
+    from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold, cross_val_score
     
     xgb_base = xgb.XGBClassifier(objective='multi:softmax', num_class=len(class_names), 
                                  random_state=42, n_jobs=1, verbosity=0, use_label_encoder=False)
@@ -277,13 +413,15 @@ def train_xgboost(data_pack, use_feature_selection=True, keep_ratio=0.6):
     global _progress_tracker
     _progress_tracker = GridSearchProgress(total_fits, desc="XGB Search")
     
+    skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    
     search = RandomizedSearchCV(
-        xgb_base, param_grid, n_iter=n_iter, cv=cv_folds, 
+        xgb_base, param_grid, n_iter=n_iter, cv=skf, 
         scoring=_scoring_with_progress, n_jobs=2, verbose=0, random_state=42
     )
     
     try:
-        search.fit(X_train, y_train)
+        search.fit(X_selected, y_train)
     finally:
         _progress_tracker.close()
         _progress_tracker = None
@@ -292,8 +430,42 @@ def train_xgboost(data_pack, use_feature_selection=True, keep_ratio=0.6):
     print(f"  Best CV Acc: {search.best_score_:.2%}")
     
     model = search.best_estimator_
-    test_acc = accuracy_score(y_test, model.predict(X_test))
-    print(f"  Test Acc:    {test_acc:.2%}")
+    
+    # Final evaluation
+    if use_cv:
+        print("\n  [STEP 3] FINAL CROSS-VALIDATION (5-fold)")
+        final_cv_scores = cross_val_score(model, X_selected, y_train, cv=skf, n_jobs=-1)
+        cv_acc = final_cv_scores.mean()
+        cv_std = final_cv_scores.std()
+        print(f"  CV Accuracy:  {cv_acc:.2%} ± {cv_std:.2%}")
+        print(f"  Fold scores:  {[f'{s:.2%}' for s in final_cv_scores]}")
+        
+        print("\n  [STEP 4] TRAINING FINAL MODEL ON ALL DATA")
+        model.fit(X_selected, y_train)
+        test_acc = cv_acc
+    elif hybrid_mode:
+        # HYBRID: CV on training data + final evaluation on held-out test
+        print("\n  [STEP 3] CROSS-VALIDATION ON TRAINING DATA (5-fold)")
+        final_cv_scores = cross_val_score(model, X_selected, y_train, cv=skf, n_jobs=-1)
+        cv_acc = final_cv_scores.mean()
+        cv_std = final_cv_scores.std()
+        print(f"  CV Accuracy:  {cv_acc:.2%} ± {cv_std:.2%}")
+        print(f"  Fold scores:  {[f'{s:.2%}' for s in final_cv_scores]}")
+        
+        # Evaluate on held-out test set
+        print("\n  [STEP 4] HELD-OUT TEST SET EVALUATION")
+        if X_test_selected is not None and len(X_test_selected) > 0:
+            test_acc = accuracy_score(y_test, model.predict(X_test_selected))
+            print(f"  Test Acc:     {test_acc:.2%} (on {len(y_test)} held-out samples)")
+            print(f"\n  📊 SUMMARY:")
+            print(f"     CV Accuracy (reliable):  {cv_acc:.2%} ± {cv_std:.2%}")
+            print(f"     Test Accuracy (verify):  {test_acc:.2%}")
+            test_acc = cv_acc  # Use CV accuracy as the primary metric
+        else:
+            test_acc = cv_acc
+    else:
+        test_acc = accuracy_score(y_test, model.predict(X_test_selected if use_feature_selection else X_test))
+        print(f"  Test Acc:    {test_acc:.2%}")
     
     # Show top 10 features from final model
     if hasattr(model, 'feature_importances_'):
@@ -314,11 +486,11 @@ def train_xgboost(data_pack, use_feature_selection=True, keep_ratio=0.6):
     save_model(
         model, scaler, le, class_names, test_acc, 'xgboost', 
         search.best_params_, selected_feature_names,
-        all_importance_data, final_importance_data
+        all_importance_data, final_importance_data, n_features_original
     )
 
 def save_model(model, scaler, le, class_names, test_acc, model_type, params,
-               selected_features=None, feature_selection_data=None, final_importance_data=None):
+               selected_features=None, feature_selection_data=None, final_importance_data=None, n_features_in=None):
     version_num = get_next_version(models_dir)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     version_name = f"v{version_num:03d}_{timestamp}_{model_type}"
@@ -357,6 +529,7 @@ def save_model(model, scaler, le, class_names, test_acc, model_type, params,
         'hyperparameters': params,
         'class_names': class_names,
         'num_features': len(selected_features) if selected_features else None,
+        'n_features_in': n_features_in,  # Total features before selection
         'feature_selection_used': feature_selection_data is not None
     }
     with open(os.path.join(version_dir, 'metadata.json'), 'w') as f:
@@ -395,8 +568,20 @@ if __name__ == "__main__":
     print("  2. XGBoost")
     c = input("\nChoice: ").strip()
     
+    # Ask about feature selection
+    print("\nFeature Selection:")
+    print("  1. Use feature selection (keep 60% of features, protect stick features)")
+    print("  2. Use all features (no selection)")
+    fs_choice = input("\nChoice [1/2]: ").strip()
+    use_feature_selection = (fs_choice != '2')
+    
+    if use_feature_selection:
+        print("✓ Feature selection enabled (60% kept, stick features protected)")
+    else:
+        print("✓ Using all features")
+    
     data_pack = load_and_prepare_data()
     
-    if c == '1': train_random_forest(data_pack)
-    elif c == '2': train_xgboost(data_pack)
+    if c == '1': train_random_forest(data_pack, use_feature_selection=use_feature_selection)
+    elif c == '2': train_xgboost(data_pack, use_feature_selection=use_feature_selection)
     else: print("Invalid choice")

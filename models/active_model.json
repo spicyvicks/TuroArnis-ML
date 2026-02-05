@@ -1,11 +1,11 @@
 {
-  "version": "v034_20260203_221601_xgboost",
-  "path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v034_20260203_221601_xgboost",
-  "model_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v034_20260203_221601_xgboost\\model_xgb.joblib",
-  "model_type": "xgboost",
-  "encoder_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v034_20260203_221601_xgboost\\label_encoder.joblib",
-  "scaler_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v034_20260203_221601_xgboost\\scaler.joblib",
-  "selected_features_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v034_20260203_221601_xgboost\\selected_features.json",
-  "test_accuracy": 0.29901960784313725,
-  "set_at": "2026-02-03T22:16:01.582542"
+  "version": "v042_20260205_125655_random_forest",
+  "path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v042_20260205_125655_random_forest",
+  "model_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v042_20260205_125655_random_forest\\model_rf.joblib",
+  "model_type": "random_forest",
+  "encoder_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v042_20260205_125655_random_forest\\label_encoder.joblib",
+  "scaler_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v042_20260205_125655_random_forest\\scaler.joblib",
+  "selected_features_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v042_20260205_125655_random_forest\\selected_features.json",
+  "test_accuracy": 0.45098039215686275,
+  "set_at": "2026-02-05T12:56:56.044572"
 }
