@@ -1,17 +1,20 @@
 """
 Combined feature extraction: MediaPipe body landmarks + YOLO stick detector
-Extracts 68 body features + 24 stick features = 92 features total (+ class label)
+Extracts 76 body features + 34 stick features = 110 features total (+ class label)
 
 Body features include:
 - Joint angles (15), cross-body angles (4)
 - Relative positions (22), distances (8)
 - Symmetry (5), proportions (4)
 - Laterality (10) - explicit left/right indicators
+- Palm orientation (8) - critical for elbow block differentiation
 
 Stick features include:
-- Basic: detected, length, angle, positions
-- Strike targets: distance to eyes, crown, chest, solar plexus, knees
-- Direction: normalized stick direction vector
+- Basic: detected, length, angle, positions (14)
+- Strike targets: distance to eyes, crown, chest, solar plexus, knees (7)
+- Direction: normalized stick direction vector (3)
+- Target ratios: comparative distances to disambiguate thrust types (5)
+- Closest target indicators: one-hot style features (5)
 """
 import cv2
 import numpy as np
@@ -44,7 +47,7 @@ def init_worker():
     import mediapipe as mp
     worker_pose_instance = mp.solutions.pose.Pose(
         static_image_mode=True,
-        model_complexity=2,
+        model_complexity=1,  # Reduced from 2 for faster extraction (still accurate for poses)
         min_detection_confidence=0.5
     )
     if os.path.exists(STICK_MODEL_PATH):
@@ -177,13 +180,52 @@ def extract_body_features(lm):
                   left_elbow_tucked, right_elbow_tucked, 
                   right_arm_extension - left_arm_extension]  # Signed difference
     
-    # combine all 68 body features (was 58, added 10 laterality)
+    # ===== PALM ORIENTATION FEATURES (8) - critical for elbow blocks =====
+    # MediaPipe landmarks: 15=left_wrist, 17=left_pinky, 19=left_index
+    #                      16=right_wrist, 18=right_pinky, 20=right_index
+    # Palm facing direction can be inferred from pinky vs index position relative to shoulders
+    
+    # Left hand palm orientation
+    # Vector from wrist to hand center (midpoint of index and pinky)
+    left_hand_center_x = (lm[17].x + lm[19].x) / 2
+    left_hand_center_y = (lm[17].y + lm[19].y) / 2
+    left_palm_vec_x = left_hand_center_x - lm[15].x  # Direction palm is facing (x)
+    left_palm_vec_y = left_hand_center_y - lm[15].y  # Direction palm is facing (y)
+    
+    # Is left palm facing toward right shoulder? (positive x relative to wrist)
+    left_palm_toward_right = left_palm_vec_x  # Positive = facing right
+    
+    # Left pinky vs index relative position (indicates rotation)
+    left_pinky_vs_index_x = lm[17].x - lm[19].x  # Positive = pinky is right of index
+    left_pinky_vs_index_y = lm[17].y - lm[19].y  # Positive = pinky is below index
+    
+    # Right hand palm orientation
+    right_hand_center_x = (lm[18].x + lm[20].x) / 2
+    right_hand_center_y = (lm[18].y + lm[20].y) / 2
+    right_palm_vec_x = right_hand_center_x - lm[16].x
+    right_palm_vec_y = right_hand_center_y - lm[16].y
+    
+    # Is right palm facing toward left shoulder? (negative x relative to wrist)
+    right_palm_toward_left = -right_palm_vec_x  # Positive = facing left
+    
+    # Right pinky vs index relative position
+    right_pinky_vs_index_x = lm[18].x - lm[20].x
+    right_pinky_vs_index_y = lm[18].y - lm[20].y
+    
+    palm_orientation = [
+        left_palm_toward_right, left_pinky_vs_index_x, left_pinky_vs_index_y,
+        right_palm_toward_left, right_pinky_vs_index_x, right_pinky_vs_index_y,
+        left_palm_vec_x - right_palm_vec_x,  # Palm direction difference
+        left_pinky_vs_index_x - right_pinky_vs_index_x  # Rotation difference
+    ]
+    
+    # combine all 76 body features (was 68, added 8 palm orientation)
     features = (angles + cross_body_angles + 
                left_wrist_rel + right_wrist_rel +
                left_hand_rel + right_hand_rel +
                left_foot_rel + right_foot_rel +
                [shoulder_tilt, hip_tilt, stance_width, facing_direction] +
-               distances + symmetry + proportions + laterality)
+               distances + symmetry + proportions + laterality + palm_orientation)
     
     return features
 
@@ -199,8 +241,8 @@ def extract_stick_features(image, lm_px, img_w, img_h, body_height):
     """
     global worker_stick_model
     
-    # default zeros if no stick detected (24 features now)
-    zero_features = [0.0] * 24
+    # default zeros if no stick detected (34 features now)
+    zero_features = [0.0] * 34
     
     if worker_stick_model is None:
         return zero_features
@@ -286,7 +328,7 @@ def extract_stick_features(image, lm_px, img_w, img_h, body_height):
             tip_vs_hip_x = tip_x_norm - hip_center[0]
             tip_vs_hip_y = tip_y_norm - hip_center[1]
             
-            # ===== NEW: STRIKE TARGET DISTANCES =====
+            # ===== STRIKE TARGET DISTANCES =====
             # Distance from tip to each strike target (normalized)
             tip_to_left_eye = np.sqrt((tip_x_norm - left_eye[0])**2 + (tip_y_norm - left_eye[1])**2)
             tip_to_right_eye = np.sqrt((tip_x_norm - right_eye[0])**2 + (tip_y_norm - right_eye[1])**2)
@@ -296,7 +338,28 @@ def extract_stick_features(image, lm_px, img_w, img_h, body_height):
             tip_to_left_knee = np.sqrt((tip_x_norm - left_knee[0])**2 + (tip_y_norm - left_knee[1])**2)
             tip_to_right_knee = np.sqrt((tip_x_norm - right_knee[0])**2 + (tip_y_norm - right_knee[1])**2)
             
-            # ===== NEW: STICK DIRECTION RELATIVE TO BODY =====
+            # ===== NEW: RELATIVE TARGET FEATURES =====
+            # These indicate WHICH target is closest (more discriminative)
+            min_eye_dist = min(tip_to_left_eye, tip_to_right_eye)
+            min_knee_dist = min(tip_to_left_knee, tip_to_right_knee)
+            
+            # Ratios: if tip is at chest, chest_vs_eye should be < 1
+            chest_vs_eye = tip_to_chest / (min_eye_dist + 0.001)
+            chest_vs_solar = tip_to_chest / (tip_to_solar + 0.001)
+            eye_vs_crown = min_eye_dist / (tip_to_crown + 0.001)
+            solar_vs_knee = tip_to_solar / (min_knee_dist + 0.001)
+            crown_vs_chest = tip_to_crown / (tip_to_chest + 0.001)
+            
+            # One-hot-like: which target is closest?
+            all_targets = [tip_to_chest, tip_to_solar, min_eye_dist, tip_to_crown, min_knee_dist]
+            min_dist = min(all_targets)
+            closest_is_chest = 1.0 if tip_to_chest == min_dist else 0.0
+            closest_is_solar = 1.0 if tip_to_solar == min_dist else 0.0
+            closest_is_eye = 1.0 if min_eye_dist == min_dist else 0.0
+            closest_is_crown = 1.0 if tip_to_crown == min_dist else 0.0
+            closest_is_knee = 1.0 if min_knee_dist == min_dist else 0.0
+            
+            # ===== STICK DIRECTION RELATIVE TO BODY =====
             # Is stick pointing left, right, up, or down relative to body center?
             body_center_x = (shoulder_center[0] + hip_center[0]) / 2
             body_center_y = (shoulder_center[1] + hip_center[1]) / 2
@@ -319,12 +382,17 @@ def extract_stick_features(image, lm_px, img_w, img_h, body_height):
                 grip_to_holding_wrist, holding_hand,
                 tip_vs_shoulder_y, tip_vs_hip_x, tip_vs_hip_y,
                 stick_conf, keypoint_conf,
-                # NEW 10 features for strike targets
+                # Strike target distances (7)
                 tip_to_left_eye, tip_to_right_eye, tip_to_crown,
                 tip_to_chest, tip_to_solar,
                 tip_to_left_knee, tip_to_right_knee,
+                # Stick direction (3)
                 stick_dir_x_norm, stick_dir_y_norm,
-                body_center_y - tip_y_norm  # How high is tip relative to body center
+                body_center_y - tip_y_norm,  # How high is tip relative to body center
+                # NEW: Relative target ratios (5) - discriminate thrust types
+                chest_vs_eye, chest_vs_solar, eye_vs_crown, solar_vs_knee, crown_vs_chest,
+                # NEW: Closest target indicators (5) - one-hot style
+                closest_is_chest, closest_is_solar, closest_is_eye, closest_is_crown, closest_is_knee
             ]
         
         return zero_features
@@ -408,20 +476,29 @@ def get_feature_header():
     laterality_names = ['dominant_arm', 'dominant_elbow_height', 'dominant_wrist_forward',
                         'dominant_hand_height', 'active_wrist_x', 'left_wrist_side', 'right_wrist_side',
                         'left_elbow_tucked', 'right_elbow_tucked', 'arm_ext_diff']
-    # 24 stick features (expanded from 14)
+    # 8 palm orientation features (critical for elbow blocks)
+    palm_names = ['left_palm_toward_right', 'left_pinky_vs_index_x', 'left_pinky_vs_index_y',
+                  'right_palm_toward_left', 'right_pinky_vs_index_x', 'right_pinky_vs_index_y',
+                  'palm_direction_diff', 'palm_rotation_diff']
+    # 34 stick features
     stick_names = ['stick_detected', 'stick_length_norm', 'stick_angle',
                   'grip_x_norm', 'grip_y_norm', 'tip_x_norm', 'tip_y_norm',
                   'grip_to_holding_wrist', 'holding_hand',
                   'tip_vs_shoulder_y', 'tip_vs_hip_x', 'tip_vs_hip_y',
                   'stick_conf', 'keypoint_conf',
-                  # NEW strike target features
+                  # Strike target distances
                   'tip_to_left_eye', 'tip_to_right_eye', 'tip_to_crown',
                   'tip_to_chest', 'tip_to_solar',
                   'tip_to_left_knee', 'tip_to_right_knee',
-                  'stick_dir_x', 'stick_dir_y', 'tip_height_vs_body']
+                  # Stick direction
+                  'stick_dir_x', 'stick_dir_y', 'tip_height_vs_body',
+                  # Target ratios (discriminate thrust types)
+                  'chest_vs_eye', 'chest_vs_solar', 'eye_vs_crown', 'solar_vs_knee', 'crown_vs_chest',
+                  # Closest target indicators
+                  'closest_is_chest', 'closest_is_solar', 'closest_is_eye', 'closest_is_crown', 'closest_is_knee']
     
     header = (['class'] + angle_names + cross_body_names + position_names + 
-              distance_names + symmetry_names + proportion_names + laterality_names + stick_names)
+              distance_names + symmetry_names + proportion_names + laterality_names + palm_names + stick_names)
     return header
 
 def extract_features_from_dataset(dataset_path, csv_output_path):
@@ -429,7 +506,7 @@ def extract_features_from_dataset(dataset_path, csv_output_path):
     print(f"\n[STAGE 1] Extracting COMBINED features (body + stick)...")
     
     header = get_feature_header()
-    print(f"  Feature count: {len(header) - 1} (68 body + 24 stick)")
+    print(f"  Feature count: {len(header) - 1} (76 body + 34 stick)")
     
     # check stick model exists
     if not os.path.exists(STICK_MODEL_PATH):
@@ -452,9 +529,8 @@ def extract_features_from_dataset(dataset_path, csv_output_path):
     
     # Extract features using multiprocessing
     # Note: YOLO has issues with multiprocessing, use fewer workers to avoid memory leaks
-    # Consider setting n_workers=1 if you experience crashes
-    n_workers = max(1, min(2, cpu_count() - 1))  # Reduced from 4 to 2 for YOLO stability
-    print(f"  Using {n_workers} workers (reduced for YOLO stability)...")
+    n_workers = max(1, min(4, cpu_count() - 1))  # Increased to 4 workers for speed
+    print(f"  Using {n_workers} workers...")
     
     with Pool(n_workers, initializer=init_worker) as pool:
         results = list(tqdm(pool.imap(_extract_wrapper, image_tasks), total=len(image_tasks)))

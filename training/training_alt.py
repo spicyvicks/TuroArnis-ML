@@ -58,6 +58,82 @@ csv_train_file = os.path.join(project_root, 'features_train.csv')
 csv_test_file = os.path.join(project_root, 'features_test.csv')
 models_dir = os.path.join(project_root, 'models')
 
+# ============ FEATURE-LEVEL FLIP AUGMENTATION ============
+# This swaps left/right features and labels to double training data
+# and teach the model that left/right poses are mirrors of each other
+
+LABEL_SWAP = {
+    'left_chest_thrust_correct': 'right_chest_thrust_correct',
+    'right_chest_thrust_correct': 'left_chest_thrust_correct',
+    'left_elbow_block_correct': 'right_elbow_block_correct',
+    'right_elbow_block_correct': 'left_elbow_block_correct',
+    'left_eye_thrust_correct': 'right_eye_thrust_correct',
+    'right_eye_thrust_correct': 'left_eye_thrust_correct',
+    'left_knee_block_correct': 'right_knee_block_correct',
+    'right_knee_block_correct': 'left_knee_block_correct',
+    'left_temple_block_correct': 'right_temple_block_correct',
+    'right_temple_block_correct': 'left_temple_block_correct',
+    'neutral_stance': 'neutral_stance',
+    'crown_thrust_correct': 'crown_thrust_correct',
+    'solar_plexus_thrust_correct': 'solar_plexus_thrust_correct',
+}
+
+FEATURE_SWAPS = [
+    ('left_elbow', 'right_elbow'), ('left_shoulder', 'right_shoulder'),
+    ('left_wrist_angle', 'right_wrist_angle'), ('left_hip', 'right_hip'),
+    ('left_knee', 'right_knee'), ('left_ankle', 'right_ankle'),
+    ('left_arm_torso', 'right_arm_torso'), ('cross_left_arm', 'cross_right_arm'),
+    ('cross_left_leg', 'cross_right_leg'),
+    ('lwrist_rel_x', 'rwrist_rel_x'), ('lwrist_rel_y', 'rwrist_rel_y'), ('lwrist_rel_z', 'rwrist_rel_z'),
+    ('lhand_rel_x', 'rhand_rel_x'), ('lhand_rel_y', 'rhand_rel_y'), ('lhand_rel_z', 'rhand_rel_z'),
+    ('lfoot_rel_x', 'rfoot_rel_x'), ('lfoot_rel_y', 'rfoot_rel_y'), ('lfoot_rel_z', 'rfoot_rel_z'),
+    ('left_arm_ext', 'right_arm_ext'), ('left_elbow_dist', 'right_elbow_dist'),
+    ('left_wrist_side', 'right_wrist_side'), ('left_elbow_tucked', 'right_elbow_tucked'),
+    ('tip_to_left_eye', 'tip_to_right_eye'), ('tip_to_left_knee', 'tip_to_right_knee'),
+    # Palm orientation swaps
+    ('left_palm_toward_right', 'right_palm_toward_left'),
+    ('left_pinky_vs_index_x', 'right_pinky_vs_index_x'),
+    ('left_pinky_vs_index_y', 'right_pinky_vs_index_y'),
+]
+
+SIGN_FLIP_FEATURES = [
+    'shoulder_tilt', 'hip_tilt', 'facing_direction', 'elbow_symmetry',
+    'shoulder_symmetry', 'knee_symmetry', 'arm_raise_symmetry', 'wrist_height_diff',
+    'active_wrist_x', 'arm_ext_diff', 'stick_dir_x', 'grip_x_norm', 'tip_x_norm', 'tip_vs_hip_x',
+    # Palm features that flip sign
+    'palm_direction_diff', 'palm_rotation_diff',
+]
+
+BINARY_FLIP_FEATURES = [
+    'dominant_arm', 'dominant_elbow_height', 'dominant_wrist_forward',
+    'dominant_hand_height', 'holding_hand',
+]
+def apply_feature_flip_augmentation(df):
+    """Create flipped version of features and combine with original."""
+    flipped = df.copy()
+    
+    # Swap feature pairs
+    for left_f, right_f in FEATURE_SWAPS:
+        if left_f in flipped.columns and right_f in flipped.columns:
+            flipped[left_f], flipped[right_f] = df[right_f].values.copy(), df[left_f].values.copy()
+    
+    # Flip sign of asymmetry features
+    for feat in SIGN_FLIP_FEATURES:
+        if feat in flipped.columns:
+            flipped[feat] = -df[feat]
+    
+    # Flip binary features (0↔1)
+    for feat in BINARY_FLIP_FEATURES:
+        if feat in flipped.columns:
+            flipped[feat] = 1.0 - df[feat]
+    
+    # Swap class labels
+    flipped['class'] = df['class'].map(LABEL_SWAP)
+    
+    return pd.concat([df, flipped], ignore_index=True)
+
+# ============ END FLIP AUGMENTATION ============
+
 def get_next_version(models_dir):
     existing = [d for d in os.listdir(models_dir) if os.path.isdir(os.path.join(models_dir, d)) and d.startswith('v')]
     if not existing:
@@ -83,6 +159,11 @@ def load_and_prepare_data(use_cross_validation=False):
         
     train = pd.read_csv(csv_train_file).dropna()
     test = pd.read_csv(csv_test_file).dropna()
+    
+    # Apply feature-level flip augmentation to training data
+    print("  Applying feature-level flip augmentation...")
+    train = apply_feature_flip_augmentation(train)
+    print(f"  Train after flip aug: {len(train)} samples")
     
     # Get feature names (all columns except 'class')
     feature_names = [col for col in train.columns if col != 'class']
@@ -122,12 +203,13 @@ def load_and_prepare_data(use_cross_validation=False):
         X_train = scaler.fit_transform(X_train)
         X_test = scaler.transform(X_test)
         
-        # Feature noise augmentation to reduce overfitting
-        print("  Applying feature noise augmentation (2x data)...")
-        noise_level = 0.05  # 5% Gaussian noise
-        X_train_noisy = X_train + np.random.normal(0, noise_level, X_train.shape)
-        X_train = np.vstack([X_train, X_train_noisy])
-        y_train = np.concatenate([y_train, y_train])
+        # STRONGER feature noise augmentation for regularization
+        print("  Applying STRONG feature noise augmentation (3x data, 10% noise)...")
+        noise_level = 0.10  # 10% Gaussian noise (was 5%)
+        X_train_noisy1 = X_train + np.random.normal(0, noise_level, X_train.shape)
+        X_train_noisy2 = X_train + np.random.normal(0, noise_level * 1.5, X_train.shape)  # 15% noise
+        X_train = np.vstack([X_train, X_train_noisy1, X_train_noisy2])
+        y_train = np.concatenate([y_train, y_train, y_train])
         print(f"  Augmented train: {len(X_train)} samples")
         
         return (X_train, y_train), (X_test, y_test), scaler, le, class_names, feature_names
@@ -262,40 +344,41 @@ def train_random_forest(data_pack, use_feature_selection=True, keep_ratio=0.6, p
     
     rf_base = RandomForestClassifier(random_state=42, n_jobs=-1, class_weight='balanced')
     
-    # ANTI-OVERFITTING param grid - prioritizes regularization
+    # AGGRESSIVE ANTI-OVERFITTING param grid
+    # Goal: Reduce 35% CV-test gap by forcing simpler models
     param_grid = {
-        'n_estimators': [200, 300, 500],
-        'max_depth': [5, 8, 10, 12],           # LOWER depths to prevent memorization
-        'min_samples_split': [10, 20, 30],     # HIGHER - need more samples to split
-        'min_samples_leaf': [5, 10, 15],       # HIGHER - prevent small leaves
-        'max_features': ['sqrt', 0.3, 0.5],    # LIMIT features per tree
-        'bootstrap': [True],                    # Always bootstrap for variance reduction
-        'max_samples': [0.7, 0.8, 0.9]         # Subsample training data
+        'n_estimators': [100, 150, 200],       # FEWER trees - less memorization
+        'max_depth': [3, 4, 5, 6],             # VERY SHALLOW - force generalization
+        'min_samples_split': [20, 30, 50],     # HIGH - need many samples to split
+        'min_samples_leaf': [10, 15, 20, 30],  # HIGH - large leaves = simpler rules
+        'max_features': ['sqrt', 0.2, 0.3],    # FEWER features per tree
+        'bootstrap': [True],                    # Always bootstrap
+        'max_samples': [0.5, 0.6, 0.7],        # SMALLER subsample = more variance
+        'ccp_alpha': [0.001, 0.005, 0.01],     # Cost-complexity pruning
     }
     
     # Use RandomizedSearch to keep it efficient despite larger grid
-    n_iter = 20
-    cv_folds = 5
+    n_iter = 15
+    cv_folds = 3
     total_fits = n_iter * cv_folds
     
     print(f"  Random Search: {total_fits} fits (n_iter={n_iter}, cv={cv_folds})...")
     
-    global _progress_tracker
-    _progress_tracker = GridSearchProgress(total_fits, desc="RF Random Search")
-    
     # Use stratified k-fold for consistency
     skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
     
+    print(f"  Starting RandomizedSearchCV (this may take 2-5 minutes)...")
+    
     grid_search = RandomizedSearchCV(
-        rf_base, param_grid, n_iter=n_iter, cv=skf, scoring=_scoring_with_progress, 
-        n_jobs=2, verbose=0, random_state=42
+        rf_base, param_grid, n_iter=n_iter, cv=skf, scoring='accuracy', 
+        n_jobs=-1, verbose=2, random_state=42
     )
     
     try:
         grid_search.fit(X_selected, y_train)
-    finally:
-        _progress_tracker.close()
-        _progress_tracker = None
+    except KeyboardInterrupt:
+        print("\n  [INTERRUPTED] Grid search cancelled by user.")
+        raise SystemExit(1)
         
     print(f"\n  Best Params: {grid_search.best_params_}")
     print(f"  Best CV Acc: {grid_search.best_score_:.2%}")
@@ -407,40 +490,39 @@ def train_xgboost(data_pack, use_feature_selection=True, keep_ratio=0.6, protect
     xgb_base = xgb.XGBClassifier(objective='multi:softmax', num_class=len(class_names), 
                                  random_state=42, n_jobs=1, verbosity=0, use_label_encoder=False)
     
-    # ANTI-OVERFITTING param grid - heavy regularization
+    # AGGRESSIVE ANTI-OVERFITTING - extreme regularization
+    # Goal: Close the 35% CV-test gap
     param_grid = {
-        'n_estimators': [100, 200, 300],
-        'max_depth': [3, 4, 5, 6],             # LOWER - prevents deep memorization
-        'learning_rate': [0.01, 0.03, 0.05],  # LOWER - slower learning generalizes better
-        'subsample': [0.6, 0.7, 0.8],          # LOWER - use less data per tree
-        'colsample_bytree': [0.5, 0.6, 0.7],   # LOWER - use fewer features per tree
-        'gamma': [0.1, 0.3, 0.5, 1.0],         # HIGHER - require more gain to split
-        'reg_alpha': [0, 0.1, 0.5, 1.0],       # L1 regularization
-        'reg_lambda': [1.0, 2.0, 5.0],         # L2 regularization
-        'min_child_weight': [3, 5, 10]         # HIGHER - need more samples in leaves
+        'n_estimators': [50, 100, 150],        # FEWER trees
+        'max_depth': [2, 3, 4],                # VERY SHALLOW
+        'learning_rate': [0.01, 0.02, 0.03],   # VERY SLOW learning
+        'subsample': [0.4, 0.5, 0.6],          # MUCH LESS data per tree
+        'colsample_bytree': [0.3, 0.4, 0.5],   # MUCH FEWER features per tree
+        'gamma': [0.5, 1.0, 2.0, 5.0],         # MUCH HIGHER min gain
+        'reg_alpha': [0.5, 1.0, 2.0, 5.0],     # STRONG L1 regularization
+        'reg_lambda': [5.0, 10.0, 20.0],       # STRONG L2 regularization
+        'min_child_weight': [10, 20, 30]       # MUCH HIGHER - big leaves only
     }
     
-    n_iter = 20
-    cv_folds = 5
+    n_iter = 15
+    cv_folds = 3
     total_fits = n_iter * cv_folds
     
     print(f"  Random Search: {total_fits} fits (n_iter={n_iter}, cv={cv_folds})...")
-    
-    global _progress_tracker
-    _progress_tracker = GridSearchProgress(total_fits, desc="XGB Search")
+    print(f"  Starting RandomizedSearchCV (this may take 1-3 minutes)...")
     
     skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
     
     search = RandomizedSearchCV(
         xgb_base, param_grid, n_iter=n_iter, cv=skf, 
-        scoring=_scoring_with_progress, n_jobs=2, verbose=0, random_state=42
+        scoring='accuracy', n_jobs=-1, verbose=2, random_state=42
     )
     
     try:
         search.fit(X_selected, y_train)
-    finally:
-        _progress_tracker.close()
-        _progress_tracker = None
+    except KeyboardInterrupt:
+        print("\n  [INTERRUPTED] Grid search cancelled by user.")
+        raise SystemExit(1)
         
     print(f"\n  Best Params: {search.best_params_}")
     print(f"  Best CV Acc: {search.best_score_:.2%}")

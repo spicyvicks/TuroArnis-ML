@@ -96,13 +96,15 @@ class EnsembleClassifier:
         print(f"  LOADING ENSEMBLE MODELS ({self.voting.upper()} VOTING)")
         print(f"{'='*60}")
         
-        # First pass: check expected feature count from CSV
+        # First pass: get feature names from CSV
         csv_path = os.path.join(project_root, 'features_train.csv')
-        expected_feature_count = None
+        csv_feature_names = None
+        csv_feature_count = 0
         if os.path.exists(csv_path):
             df_temp = pd.read_csv(csv_path, nrows=0)
-            expected_feature_count = len([col for col in df_temp.columns if col != 'class'])
-            print(f"\n[INFO] Current CSV has {expected_feature_count} features")
+            csv_feature_names = [col for col in df_temp.columns if col != 'class']
+            csv_feature_count = len(csv_feature_names)
+            print(f"\n[INFO] Current CSV has {csv_feature_count} features")
         
         for version_name in model_versions:
             version_path = os.path.join(MODELS_DIR, version_name)
@@ -115,20 +117,22 @@ class EnsembleClassifier:
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
             
-            # Check if model's scaler is compatible with current feature count
+            # Check if scaler is compatible (must match exactly)
+            # The scaler was fit on n_features_in features, so CSV must have same count
             model_n_features = metadata.get('n_features_in')
-            if expected_feature_count and model_n_features and model_n_features != expected_feature_count:
-                print(f"[SKIP] {version_name}: trained on {model_n_features} features, CSV has {expected_feature_count}")
+            if model_n_features and csv_feature_count and model_n_features != csv_feature_count:
+                print(f"[SKIP] {version_name}: scaler expects {model_n_features} features, CSV has {csv_feature_count}")
+                print(f"       → Re-extract features or retrain model to match")
                 continue
             
-            model_type = metadata.get('model_type', 'dnn')
-            
-            # Load selected features if available (for feature selection during training)
+            # Load selected features - tells us which features the model actually uses
             selected_features = None
             selected_features_path = os.path.join(version_path, 'selected_features.json')
             if os.path.exists(selected_features_path):
                 with open(selected_features_path, 'r') as f:
                     selected_features = json.load(f)
+            
+            model_type = metadata.get('model_type', 'dnn')
             
             if model_type == 'dnn':
                 model_path = os.path.join(version_path, 'model.keras')
@@ -152,11 +156,16 @@ class EnsembleClassifier:
                     print(f"[WARN] Skipping {version_name}: {os.path.basename(model_path)} not found")
                     continue
             
-            if self.scaler is None:
-                scaler_path = os.path.join(version_path, 'scaler.joblib')
-                if os.path.exists(scaler_path):
-                    self.scaler = joblib.load(scaler_path)
+            # Load model-specific scaler (each model may have different feature sets)
+            model_scaler = None
+            scaler_path = os.path.join(version_path, 'scaler.joblib')
+            if os.path.exists(scaler_path):
+                model_scaler = joblib.load(scaler_path)
+            else:
+                print(f"[WARN] Skipping {version_name}: scaler.joblib not found")
+                continue
             
+            # Use first model's label encoder (they should all be the same)
             if self.label_encoder is None:
                 encoder_path = os.path.join(version_path, 'label_encoder.joblib')
                 if os.path.exists(encoder_path):
@@ -167,7 +176,8 @@ class EnsembleClassifier:
                 'name': version_name,
                 'type': model_type,
                 'accuracy': metadata.get('test_accuracy', 0),
-                'selected_features': selected_features  # Store for feature selection during prediction
+                'selected_features': selected_features,  # Features the model uses
+                'scaler': model_scaler  # Model's own scaler
             })
             
             if self.verbose:
@@ -182,16 +192,23 @@ class EnsembleClassifier:
         if len(self.models) == 0:
             raise ValueError("No models could be loaded")
         
-        if self.scaler is None or self.label_encoder is None:
-            raise ValueError("Could not load scaler or label encoder")
+        if self.label_encoder is None:
+            raise ValueError("Could not load label encoder")
+        
+        # Cache CSV feature names for prediction
+        csv_path = os.path.join(project_root, 'features_train.csv')
+        if os.path.exists(csv_path):
+            df_temp = pd.read_csv(csv_path, nrows=0)
+            self.csv_feature_names = [col for col in df_temp.columns if col != 'class']
+        else:
+            self.csv_feature_names = None
     
     def predict_proba(self, X):
-        # Scale features
-        X_scaled = self.scaler.transform(X)
-        
-        # Get all feature names from the CSV (assumes feature_names are columns of input)
-        # For this to work, we need to track feature names globally or pass them
-        
+        """
+        Get prediction probabilities from all models.
+        X should be raw (unscaled) features matching the current CSV column order.
+        Flow: scale ALL features first, then select subset for each model.
+        """
         # Collect probabilities from all models
         all_probas = []
         
@@ -199,58 +216,40 @@ class EnsembleClassifier:
             model_type = self.model_info[i]['type']
             model_name = self.model_info[i]['name']
             selected_features = self.model_info[i].get('selected_features')
+            model_scaler = self.model_info[i].get('scaler')
             
-            # Apply feature selection if model was trained with it
-            if selected_features:
-                # Get feature indices from the CSV column names
-                # We need to match feature names to indices
-                # For now, assume selected_features is a list of feature names
-                # and X_scaled columns match the order in features_train.csv
+            # Step 1: Scale ALL features first (scaler was fit on all features)
+            if model_scaler is not None:
+                X_scaled = model_scaler.transform(X)
+            else:
+                X_scaled = X
+            
+            # Step 2: Extract only the features this model needs (after scaling)
+            if selected_features and self.csv_feature_names:
+                # Find indices of selected features in the CSV
+                selected_indices = []
+                for fname in selected_features:
+                    if fname in self.csv_feature_names:
+                        selected_indices.append(self.csv_feature_names.index(fname))
                 
-                # Load feature names from CSV header (should be cached but let's be safe)
-                csv_path = os.path.join(project_root, 'features_train.csv')
-                if os.path.exists(csv_path):
-                    df_temp = pd.read_csv(csv_path, nrows=0)  # Just get headers
-                    all_feature_names = [col for col in df_temp.columns if col != 'class']
-                    
-                    # Find indices of selected features (with validation)
-                    selected_indices = []
-                    missing_features = []
-                    for fname in selected_features:
-                        if fname in all_feature_names:
-                            selected_indices.append(all_feature_names.index(fname))
-                        else:
-                            missing_features.append(fname)
-                    
-                    if missing_features:
-                        print(f"[WARN] Model {model_name}: {len(missing_features)} features not found in CSV")
-                        if len(selected_indices) == 0:
-                            print(f"[ERROR] No valid features for {model_name}, using all features")
-                            X_model = X_scaled
-                        else:
-                            X_model = X_scaled[:, selected_indices]
-                    else:
-                        X_model = X_scaled[:, selected_indices]
-                else:
-                    # Fallback: use all features
-                    print(f"[WARN] CSV not found, using all features for {model_name}")
-                    X_model = X_scaled
+                if len(selected_indices) != len(selected_features):
+                    missing = set(selected_features) - set(self.csv_feature_names)
+                    print(f"[WARN] {model_name}: {len(missing)} features missing")
+                
+                X_model = X_scaled[:, selected_indices]
             else:
                 X_model = X_scaled
             
             try:
                 if model_type == 'dnn':
-                    # DNN outputs probabilities directly
                     proba = model.predict(X_model, verbose=0)
                 else:
-                    # Random Forest and XGBoost both have predict_proba method
                     proba = model.predict_proba(X_model)
                 
                 all_probas.append(proba)
             except Exception as e:
                 print(f"[ERROR] Model {model_name} prediction failed: {e}")
-                print(f"  X_model shape: {X_model.shape}")
-                print(f"  Selected features: {len(selected_features) if selected_features else 'None'}")
+                print(f"  X_model shape: {X_model.shape}, expected features: {len(selected_features) if selected_features else 'all'}")
                 raise
         
         # Weight and average
@@ -269,20 +268,30 @@ class EnsembleClassifier:
             probas = self.predict_proba(X)
             predictions_encoded = np.argmax(probas, axis=1)
         else:
-            # Hard voting: majority vote
-            X_scaled = self.scaler.transform(X)
-            
-            # Collect predictions from all models
+            # Hard voting: majority vote - use same per-model scaling as soft voting
             all_predictions = []
             
             for i, model in enumerate(self.models):
                 model_type = self.model_info[i]['type']
+                model_name = self.model_info[i]['name']
+                selected_features = self.model_info[i].get('selected_features')
+                model_scaler = self.model_info[i].get('scaler')
+                
+                # Step 1: Scale ALL features first
+                X_scaled = model_scaler.transform(X) if model_scaler else X
+                
+                # Step 2: Extract only the features this model needs (after scaling)
+                if selected_features and self.csv_feature_names:
+                    selected_indices = [self.csv_feature_names.index(f) for f in selected_features if f in self.csv_feature_names]
+                    X_model = X_scaled[:, selected_indices]
+                else:
+                    X_model = X_scaled
                 
                 if model_type == 'dnn':
-                    proba = model.predict(X_scaled, verbose=0)
+                    proba = model.predict(X_model, verbose=0)
                     pred = np.argmax(proba, axis=1)
                 else:
-                    pred = model.predict(X_scaled)
+                    pred = model.predict(X_model)
                 
                 all_predictions.append(pred)
             
@@ -310,16 +319,29 @@ class EnsembleClassifier:
         return accuracy, predictions, report
     
     def get_model_contributions(self, X):
-        X_scaled = self.scaler.transform(X)
+        """Get individual model predictions for analysis."""
         contributions = []
         
         for i, model in enumerate(self.models):
             model_type = self.model_info[i]['type']
+            model_name = self.model_info[i]['name']
+            selected_features = self.model_info[i].get('selected_features')
+            model_scaler = self.model_info[i].get('scaler')
+            
+            # Step 1: Scale ALL features first
+            X_scaled = model_scaler.transform(X) if model_scaler else X
+            
+            # Step 2: Extract only the features this model needs (after scaling)
+            if selected_features and self.csv_feature_names:
+                selected_indices = [self.csv_feature_names.index(f) for f in selected_features if f in self.csv_feature_names]
+                X_model = X_scaled[:, selected_indices]
+            else:
+                X_model = X_scaled
             
             if model_type == 'dnn':
-                proba = model.predict(X_scaled, verbose=0)
+                proba = model.predict(X_model, verbose=0)
             else:
-                proba = model.predict(X_scaled)
+                proba = model.predict_proba(X_model)
             
             pred_encoded = np.argmax(proba, axis=1)
             pred_labels = self.label_encoder.inverse_transform(pred_encoded)
@@ -464,14 +486,49 @@ def optimize_ensemble_weights(csv_path=None, model_versions=None, voting='soft')
         # For 2 models: try weights from 0.1 to 0.9 in steps of 0.1
         weight_range = [i/10 for i in range(1, 10)]
         combinations = [(w, 1-w) for w in weight_range]
-    else:
-        # For 3+ models: coarser grid to avoid explosion
-        weight_range = [0.2, 0.3, 0.4, 0.5]
+    elif num_models == 3:
+        # For 3 models: finer grid since it's still manageable
+        # Weights must sum to 1.0, each between 0.1 and 0.7
+        step = 0.1
         combinations = []
-        for combo in product(weight_range, repeat=num_models-1):
-            last_weight = 1.0 - sum(combo)
-            if 0.1 <= last_weight <= 0.6:  # Last weight should also be reasonable
-                combinations.append(combo + (last_weight,))
+        for w1 in [i * step for i in range(1, 8)]:  # 0.1 to 0.7
+            for w2 in [i * step for i in range(1, 8)]:  # 0.1 to 0.7
+                w3 = round(1.0 - w1 - w2, 2)
+                if 0.1 <= w3 <= 0.7:
+                    combinations.append((w1, w2, w3))
+    elif num_models == 4:
+        # For 4 models: coarser grid
+        step = 0.15
+        combinations = []
+        for w1 in [0.1, 0.2, 0.3, 0.4, 0.5]:
+            for w2 in [0.1, 0.2, 0.3, 0.4]:
+                for w3 in [0.1, 0.2, 0.3, 0.4]:
+                    w4 = round(1.0 - w1 - w2 - w3, 2)
+                    if 0.1 <= w4 <= 0.5:
+                        combinations.append((w1, w2, w3, w4))
+    else:
+        # For 5+ models: start with equal weights, then try boosting best performers
+        # Use a simplified approach: equal weights + accuracy-based weights
+        equal = tuple([1.0/num_models] * num_models)
+        
+        # Accuracy-based weights (proportional to test accuracy)
+        accuracies = [base_ensemble.model_info[i]['accuracy'] for i in range(num_models)]
+        total_acc = sum(accuracies)
+        acc_weights = tuple([a/total_acc for a in accuracies])
+        
+        # Try a few variations
+        combinations = [equal, acc_weights]
+        
+        # Also try boosting the top model
+        for boost_idx in range(min(3, num_models)):  # Boost top 3 models
+            boosted = [0.1] * num_models
+            boosted[boost_idx] = 0.4
+            remaining = 1.0 - 0.4 - 0.1 * (num_models - 1)
+            if remaining > 0:
+                for i in range(num_models):
+                    if i != boost_idx:
+                        boosted[i] += remaining / (num_models - 1)
+            combinations.append(tuple(boosted))
     
     print(f"[INFO] Testing {len(combinations)} weight combinations...\n")
     
@@ -653,21 +710,28 @@ def create_ensemble_model():
     # Sort by accuracy
     available_models.sort(key=lambda x: x['accuracy'], reverse=True)
     
-    print("\nAvailable models:")
+    print("\nAvailable models (sorted by test accuracy):")
     for i, m in enumerate(available_models, 1):
         print(f"  {i}. {m['name']} ({m['type'].upper()}) - {m['accuracy']*100:.2f}%")
     
     print("\nOptions:")
-    print("  1. Auto-select best RF + XGBoost")
-    print("  2. Manually select models")
+    print("  1. Auto-select best RF + XGBoost (2 models)")
+    print("  2. Auto-select top 3 models")
+    print("  3. Manually select 2+ models")
     
-    choice = input("\nEnter choice (1-2): ").strip()
+    choice = input("\nEnter choice (1-3): ").strip()
     
     model_versions = None
     
     if choice == '2':
-        # Manual selection
-        indices = input("Enter model numbers separated by commas (e.g. 1,3): ").strip()
+        # Auto-select top 3 by accuracy
+        model_versions = [m['name'] for m in available_models[:3]]
+        print(f"\n[AUTO-SELECT] Top 3 models:")
+        for m in available_models[:3]:
+            print(f"  - {m['name']} ({m['type'].upper()}) - {m['accuracy']*100:.2f}%")
+    elif choice == '3':
+        # Manual selection - allow 2 or more
+        indices = input("Enter model numbers separated by commas (e.g. 1,2,3): ").strip()
         try:
             indices = [int(x.strip()) - 1 for x in indices.split(',')]
             model_versions = [available_models[i]['name'] for i in indices if 0 <= i < len(available_models)]
@@ -675,6 +739,7 @@ def create_ensemble_model():
             if len(model_versions) < 2:
                 print("[ERROR] Must select at least 2 models")
                 return
+            print(f"\n[SELECTED] {len(model_versions)} models")
         except:
             print("[ERROR] Invalid input")
             return

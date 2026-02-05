@@ -44,7 +44,7 @@ def run_extraction(feature_mode='angles', train_dir=None, test_dir=None):
     print(f"  Mode: {feature_mode.upper()}")
     
     if feature_mode == 'combined':
-        print("  [Body: 68 features] + [Stick: 24 features] = 92 total")
+        print("  [Body: 76 features] + [Stick: 34 features] = 110 total")
     elif feature_mode == 'angles':
         print("  [Body angles: 58 features]")
     else:
