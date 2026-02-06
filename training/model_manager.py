@@ -77,6 +77,8 @@ def set_active_model(version_name):
         model_file = 'model_rf.joblib'
     elif model_type == 'xgboost':
         model_file = 'model_xgb.joblib'
+    elif model_type in ['geopose_gnn', 'gnn']:
+        model_file = 'model.onnx' # or model.pt if needed
     else:
         model_file = 'model.keras'
         
@@ -125,6 +127,78 @@ def train_new_model():
     print("   TRAIN NEW MODEL")
     print("="*40)
     
+    print("\nSelect Architecture:")
+    print("  1. GeoPose GNN (Graph Neural Network) [NEW - Best for Arnis]")
+    print("  2. Random Forest")
+    print("  3. XGBoost")
+    print("  4. Dense Neural Network (DNN)")
+    
+    arch = input("Choice [1]: ").strip()
+    
+    # --- GeoPose workflow ---
+    if arch == '1' or arch == '':
+        print("\n[INFO] Starting GeoPose GNN Workflow...")
+        
+        # 1. Dataset Graph Conversion
+        print("\n[STEP 1] Converting dataset to graphs...")
+        try:
+            subprocess.run([sys.executable, 'training/geopose/create_dataset.py'], 
+                         cwd=project_root, check=True)
+        except subprocess.CalledProcessError:
+            print("[ERROR] Dataset conversion failed.")
+            return
+
+        # 2. Training
+        print("\n[STEP 2] Training GNN Model (5-Fold CV)...")
+        print("Note: Output will be saved to models/v_geopose_foldX")
+        try:
+            subprocess.run([sys.executable, 'training/geopose/train.py', '--epochs', '100'], 
+                         cwd=project_root, check=True)
+        except subprocess.CalledProcessError:
+            print("[ERROR] Training failed.")
+            return
+            
+        # 3. Export
+        print("\n[STEP 3] Exporting best model to ONNX...")
+        try:
+            next_ver = get_next_version_number()
+            version_name = f"v{next_ver:03d}_geopose"
+            output_dir = os.path.join(MODELS_DIR, version_name)
+            
+            # Assuming 'v_geopose_best' was created by train.py
+            best_model_src = os.path.join(MODELS_DIR, 'v_geopose_best', 'model.pt')
+            
+            if not os.path.exists(best_model_src):
+                print("[ERROR] Trained model source (v_geopose_best) not found.")
+                return
+
+            subprocess.run([sys.executable, 'training/geopose/export_onnx.py', 
+                          '--model', best_model_src,
+                          '--output', output_dir], 
+                         cwd=project_root, check=True)
+                         
+            # Update metadata
+            meta_path = os.path.join(output_dir, 'metadata.json')
+            if os.path.exists(meta_path):
+                with open(meta_path, 'r') as f:
+                    meta = json.load(f)
+                meta['trained_at'] = datetime.now().isoformat()
+                with open(meta_path, 'w') as f:
+                    json.dump(meta, f, indent=2)
+            
+            print(f"\n[SUCCESS] Model {version_name} exported!")
+            
+            if input("Set as active model? (y/n): ").lower() == 'y':
+                set_active_model(version_name)
+                
+        except subprocess.CalledProcessError:
+            print("[ERROR] Export failed.")
+            return
+            
+        input("\nPress Enter to continue...")
+        return
+        
+    # --- Legacy Workflows (RF, XGB, DNN) ---
     # 1. Extraction Phase
     print("\n[STEP 1] Data Preparation")
     print("Do you want to re-extract features? (Recommended if you added new images)")
@@ -156,12 +230,18 @@ def train_new_model():
 
     # 2. Training Phase
     print("\n[STEP 2] Model Training")
-    print("Select Architecture:")
-    print("  1. Dense Neural Network (DNN)")
-    print("  2. Random Forest")
-    print("  3. XGBoost")
     
-    arch = input("Choice [1]: ").strip()
+    # Map selection back to legacy IDs
+    # 2 -> Random Forest (legacy id 2)
+    # 3 -> XGBoost (legacy id 3)
+    # 4 -> DNN (legacy id 1)
+    
+    legacy_arch = '1' # dnn Default
+    if arch == '2': legacy_arch = '2'
+    elif arch == '3': legacy_arch = '3'
+    elif arch == '4': legacy_arch = '1'
+    
+    arch = legacy_arch
     
     # Ask about feature selection and CV for RF/XGB
     use_feature_selection = True
