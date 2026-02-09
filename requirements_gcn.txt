@@ -1,0 +1,28 @@
+# Core PyTorch (Python 3.12 compatible)
+# Note: install with --index-url https://download.pytorch.org/whl/cu118 for CUDA 11.8
+torch==2.2.1
+torchvision==0.17.1
+torchaudio==2.2.1
+
+# Graph Neural Networks (Compatible with PyTorch 2.2.1)
+# Note: install with -f https://data.pyg.org/whl/torch-2.2.1+cu118.html
+torch-geometric==2.5.2
+torch-scatter==2.1.2
+torch-sparse==0.6.18
+torch-cluster==1.6.3
+torch-spline-conv==1.2.2
+
+# Computer Vision & Pose
+opencv-python==4.9.0.80
+mediapipe==0.10.14
+ultralytics==8.1.29
+
+# Data Science & Utilities
+numpy==1.26.4
+pandas==2.2.1
+scikit-learn==1.4.1.post1
+matplotlib==3.8.3
+seaborn==0.13.2
+tqdm==4.66.2
+Pillow==10.2.0
+requests==2.31.0
