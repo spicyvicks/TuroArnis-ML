@@ -225,8 +225,11 @@ def train_model(
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     
     # Create model
+    num_node_features = train_dataset[0].x.shape[1]
+    print(f"Input node features: {num_node_features}")
+    
     model = SpatialGCN(
-        in_channels=3,
+        in_channels=num_node_features,
         hidden_channels=hidden_channels,
         num_classes=len(CLASS_NAMES),
         dropout=dropout

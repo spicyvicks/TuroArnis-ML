@@ -13,7 +13,8 @@ from pathlib import Path
 from tqdm import tqdm
 from torch_geometric.data import Data
 from ultralytics import YOLO
-from graph_augmentation import augment_graph_conservative
+from training.graph_augmentation import augment_graph_conservative
+from training.pose_features import extract_geometric_features
 
 
 # MediaPipe setup
@@ -101,7 +102,26 @@ def extract_pose_keypoints(image_path):
     for landmark in results.pose_landmarks.landmark:
         keypoints.append([landmark.x, landmark.y, landmark.visibility])
     
-    return np.array(keypoints, dtype=np.float32)
+    keypoints = np.array(keypoints, dtype=np.float32)
+    
+    # --- NORMALIZATION START ---
+    # 1. Center pose: Move hip center to (0,0)
+    # Hips are indices 23 (left) and 24 (right)
+    hip_center = (keypoints[23, :2] + keypoints[24, :2]) / 2.0
+    keypoints[:, :2] -= hip_center
+    
+    # 2. Scale pose: Normalize by torso height (shoulder to hip)
+    # Shoulders: 11, 12. Hips: 23, 24
+    shoulder_center = (keypoints[11, :2] + keypoints[12, :2]) / 2.0
+    # Current hip center is (0,0) after centering
+    
+    torso_size = np.linalg.norm(shoulder_center)  # dist from (0,0) to shoulder center
+    if torso_size > 0:
+        keypoints[:, :2] /= (torso_size * 2.0) # Scale so torso is 0.5 units
+        
+    # --- NORMALIZATION END ---
+    
+    return keypoints
 
 
 def detect_stick(image_path):
@@ -167,19 +187,27 @@ def detect_stick(image_path):
 def build_graph(pose_keypoints, stick_nodes, label, viewpoint):
     """
     Build PyG graph from pose keypoints and stick nodes.
-    
-    Args:
-        pose_keypoints: [33, 3] array
-        stick_nodes: [2, 3] array
-        label: int (class index)
-        viewpoint: str ('front', 'left', 'right')
-    
-    Returns:
-        PyG Data object
+    Now includes geometric features (angles, distances).
     """
-    # Combine nodes (33 pose + 2 stick = 35 total)
-    node_features = np.vstack([pose_keypoints, stick_nodes])
-    x = torch.tensor(node_features, dtype=torch.float)
+    # 1. Extract geometric features (angles, distances, symmetry)
+    # Returns vector of shape [num_features]
+    geo_features = extract_geometric_features(pose_keypoints)
+    
+    # 2. Augment node features
+    # Each node gets: [x, y, vis, ...global_geometric_features...]
+    # Current node shape: [35, 3] -> [35, 3 + num_geo_features]
+    
+    # Combine nodes (33 pose + 2 stick)
+    all_nodes = np.vstack([pose_keypoints, stick_nodes])
+    num_nodes = all_nodes.shape[0]
+    
+    # Repeat global features for each node
+    node_geo_features = np.tile(geo_features, (num_nodes, 1))
+    
+    # Concatenate: [35, 3] + [35, num_geo] -> [35, 3+num_geo]
+    combined_features = np.hstack([all_nodes, node_geo_features])
+    
+    x = torch.tensor(combined_features, dtype=torch.float)
     
     # Edge index
     edge_index = torch.tensor(SKELETON_EDGES, dtype=torch.long).t().contiguous()
