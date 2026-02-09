@@ -24,7 +24,7 @@ pose_detector = mp_pose.Pose(
     min_detection_confidence=0.5
 )
 
-# Stick detector setup
+# Stick detector setup (YOLOv8-Pose model with 2 keypoints: grip and tip)
 STICK_DETECTOR_PATH = "runs/pose/arnis_stick_detector/weights/best.pt"
 stick_detector = YOLO(STICK_DETECTOR_PATH)
 
@@ -70,9 +70,9 @@ SKELETON_EDGES = [
     (2, 3), (3, 2),
     (3, 7), (7, 3),
     # Stick connections (wrists → stick nodes)
-    (15, 33), (33, 15),  # left wrist → stick top
-    (16, 33), (33, 16),  # right wrist → stick top
-    (33, 34), (34, 33),  # stick top ↔ stick bottom
+    (15, 33), (33, 15),  # left wrist → stick grip
+    (16, 33), (33, 16),  # right wrist → stick grip
+    (33, 34), (34, 33),  # stick grip ↔ stick tip
 ]
 
 
@@ -106,30 +106,38 @@ def extract_pose_keypoints(image_path):
 
 def detect_stick(image_path):
     """
-    Detect stick using YOLO and extract endpoints.
+    Detect stick using YOLOv8-Pose and extract 2 keypoints (grip and tip).
     
     Returns:
-        np.array of shape [2, 3] (stick_top, stick_bottom with x, y, confidence)
+        np.array of shape [2, 3] (grip and tip with x, y, confidence)
     """
-    results = stick_detector(str(image_path), verbose=False)
-    
-    # Check if stick detected
-    if len(results[0].boxes) > 0:
-        # Get first detection (highest confidence)
-        bbox = results[0].boxes[0].xyxy[0].cpu().numpy()  # [x1, y1, x2, y2]
-        conf = results[0].boxes[0].conf[0].cpu().numpy()
+    try:
+        results = stick_detector.predict(str(image_path), verbose=False)
         
-        # Get image dimensions for normalization
-        image = cv2.imread(str(image_path))
-        h, w = image.shape[:2]
-        
-        # Extract endpoints (top-left and bottom-right)
-        stick_top = [bbox[0] / w, bbox[1] / h, float(conf)]
-        stick_bottom = [bbox[2] / w, bbox[3] / h, float(conf)]
-        
-        return np.array([stick_top, stick_bottom], dtype=np.float32)
-    else:
-        # No stick detected → dummy nodes at center with 0 confidence
+        # Check if stick detected (keypoints available)
+        if results[0].keypoints is not None and len(results[0].keypoints.data) > 0:
+            # Get first detection (highest confidence)
+            # keypoints.data shape: [num_detections, num_keypoints, 3]
+            # We expect [1, 2, 3] for one stick with 2 keypoints (grip, tip)
+            kpts = results[0].keypoints.data[0].cpu().numpy()  # Shape: [2, 3]
+            
+            # kpts contains [grip, tip] each with [x, y, confidence]
+            # Normalize coordinates (YOLO returns pixel coordinates)
+            image = cv2.imread(str(image_path))
+            h, w = image.shape[:2]
+            
+            # Normalize x, y to [0, 1]
+            stick_grip = [kpts[0, 0] / w, kpts[0, 1] / h, float(kpts[0, 2])]
+            stick_tip = [kpts[1, 0] / w, kpts[1, 1] / h, float(kpts[1, 2])]
+            
+            return np.array([stick_grip, stick_tip], dtype=np.float32)
+        else:
+            # No stick detected → dummy nodes at center with 0 confidence
+            return np.array([[0.5, 0.5, 0.0], [0.5, 0.5, 0.0]], dtype=np.float32)
+            
+    except Exception as e:
+        print(f"Warning: Stick detection failed for {image_path}: {e}")
+        # Return dummy nodes on error
         return np.array([[0.5, 0.5, 0.0], [0.5, 0.5, 0.0]], dtype=np.float32)
 
 
