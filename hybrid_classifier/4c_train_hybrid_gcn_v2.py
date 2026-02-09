@@ -243,13 +243,23 @@ def train_hybrid_gcn(viewpoint_filter=None, epochs=150, lr=0.001, hidden_dim=256
             # PyG collates [30] tensors into [batch_size * 30], so we need to reshape
             hybrid_batch = batch.hybrid.view(batch.num_graphs, -1)
             
-            # Data Augmentation: Jitter node positions
+            # Data Augmentation: Scale + Jitter
             x = batch.x
             if augment:
-                # Add noise to x, y coordinates (cols 0, 1)
-                noise = torch.randn_like(x[:, :2]) * 0.02  # 2% jitter
+                # 1. Random Scaling (0.85 to 1.15) - Handle height/distance variations
+                scale = 0.85 + (0.3 * torch.rand(1, device=device).item())
                 x = x.clone()
-                x[:, :2] += noise
+                
+                # Scale coordinates (x, y, z) - indices 0, 1, 2
+                x[:, :3] *= scale
+                
+                # Scale distance feature (index 4) if present
+                if x.shape[1] >= 5:
+                    x[:, 4] *= scale
+                
+                # 2. Add Jitter (Noise robustness)
+                noise = torch.randn_like(x[:, :3]) * 0.02  # 2% jitter
+                x[:, :3] += noise
             
             out = model(x, batch.edge_index, batch.batch, hybrid_batch)
             loss = criterion(out, batch.y)
@@ -320,7 +330,10 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument('--viewpoint', type=str, default=None,
-                        choices=['front', 'left', 'right'])
+                        choices=['front', 'left', 'right'],
+                        help='Train on specific viewpoint only')
+    parser.add_argument('--merged', action='store_true',
+                        help='Train a single model on all viewpoints combined')
     parser.add_argument('--epochs', type=int, default=150)
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--hidden', type=int, default=256)
@@ -330,17 +343,16 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # Train all viewpoints or specific one
-    viewpoints_to_train = [args.viewpoint] if args.viewpoint else ['front', 'left', 'right']
-    
-    for vp in viewpoints_to_train:
+    # Determine training mode
+    if args.merged:
+        # Train single merged model on all viewpoints
         print(f"\n{'='*60}")
-        print(f"TRAINING HYBRID GCN V2: {vp.upper()}")
+        print(f"TRAINING MERGED MODEL (All Viewpoints)")
         print(f"{'='*60}")
         
         try:
             train_hybrid_gcn(
-                viewpoint_filter=vp,
+                viewpoint_filter=None,  # No filter = use all data
                 epochs=args.epochs,
                 lr=args.lr,
                 hidden_dim=args.hidden,
@@ -349,4 +361,45 @@ if __name__ == "__main__":
                 augment=not args.no_augment
             )
         except Exception as e:
-            print(f"Error training {vp}: {e}")
+            print(f"Error training merged model: {e}")
+    
+    elif args.viewpoint:
+        # Train single specialist model
+        print(f"\n{'='*60}")
+        print(f"TRAINING HYBRID GCN V2: {args.viewpoint.upper()}")
+        print(f"{'='*60}")
+        
+        try:
+            train_hybrid_gcn(
+                viewpoint_filter=args.viewpoint,
+                epochs=args.epochs,
+                lr=args.lr,
+                hidden_dim=args.hidden,
+                dropout=args.dropout,
+                num_layers=args.layers,
+                augment=not args.no_augment
+            )
+        except Exception as e:
+            print(f"Error training {args.viewpoint}: {e}")
+    
+    else:
+        # Default: Train all 3 specialist models
+        viewpoints_to_train = ['front', 'left', 'right']
+        
+        for vp in viewpoints_to_train:
+            print(f"\n{'='*60}")
+            print(f"TRAINING HYBRID GCN V2: {vp.upper()}")
+            print(f"{'='*60}")
+            
+            try:
+                train_hybrid_gcn(
+                    viewpoint_filter=vp,
+                    epochs=args.epochs,
+                    lr=args.lr,
+                    hidden_dim=args.hidden,
+                    dropout=args.dropout,
+                    num_layers=args.layers,
+                    augment=not args.no_augment
+                )
+            except Exception as e:
+                print(f"Error training {vp}: {e}")
