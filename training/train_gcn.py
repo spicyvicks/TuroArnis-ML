@@ -39,27 +39,45 @@ CLASS_NAMES = [
 ]
 
 
-def load_graph_dataset(dataset_root, split='train'):
-    """Load all .pt graph files from dataset."""
+def load_graph_dataset(dataset_root, split='train', viewpoint_filter=None):
+    """Load all .pt graph files from dataset.
+    
+    Args:
+        dataset_root: Path to dataset_graphs directory
+        split: 'train' or 'test'
+        viewpoint_filter: Optional viewpoint to filter ('front', 'left', 'right', or None for all)
+    """
     dataset_root = Path(dataset_root)
     graphs = []
     
     split_path = dataset_root / split
+    print(f"DEBUG: Loading from {split_path} (Exists: {split_path.exists()})")
     
-    for viewpoint in ['front', 'left', 'right']:
+    # Filter viewpoints if specified
+    viewpoints = [viewpoint_filter] if viewpoint_filter else ['front', 'left', 'right']
+    
+    for viewpoint in viewpoints:
         viewpoint_path = split_path / viewpoint
         
         if not viewpoint_path.exists():
+            print(f"DEBUG: Skipping {viewpoint} (Not found)")
             continue
-        
+            # Process each class
         for class_dir in viewpoint_path.iterdir():
             if not class_dir.is_dir():
+                print(f"DEBUG: {class_dir} is not a directory")
                 continue
             
             # Load all .pt files
-            for graph_file in class_dir.glob('*.pt'):
-                graph = torch.load(graph_file)
-                graphs.append(graph)
+            files = list(class_dir.glob('*.pt'))
+            print(f"DEBUG: Found {len(files)} files in {class_dir.name}")
+            
+            for graph_file in tqdm(files, desc=f"Loading {split}/{viewpoint}/{class_dir.name}", leave=False):
+                try:
+                    graph = torch.load(graph_file)
+                    graphs.append(graph)
+                except Exception as e:
+                    print(f"Warning: Failed to load {graph_file}: {e}")
     
     return graphs
 
@@ -195,13 +213,23 @@ def train_model(
     weight_decay=1e-3,
     max_epochs=200,
     early_stop_patience=20,
-    output_dir='models/gcn_checkpoints'
+    output_dir='models/gcn_checkpoints',
+    viewpoint_filter=None
 ):
-    """Main training function."""
+    """Main training function.
+    
+    Args:
+        viewpoint_filter: Optional viewpoint to train on ('front', 'left', 'right', or None for all)
+    """
     
     # Setup
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
+    
+    if viewpoint_filter:
+        print(f"Training on viewpoint: {viewpoint_filter}")
+    else:
+        print("Training on all viewpoints")
     
     # Create output directory
     output_dir = Path(output_dir)
@@ -209,11 +237,15 @@ def train_model(
     
     # Load datasets
     print("Loading datasets...")
-    train_dataset = load_graph_dataset(dataset_root, 'train')
-    test_dataset = load_graph_dataset(dataset_root, 'test')
+    train_dataset = load_graph_dataset(dataset_root, 'train', viewpoint_filter)
+    test_dataset = load_graph_dataset(dataset_root, 'test', viewpoint_filter)
     
     print(f"Train graphs: {len(train_dataset)}")
     print(f"Test graphs: {len(test_dataset)}")
+    
+    if len(train_dataset) == 0:
+        print("Error: No training data found! Check dataset_root.")
+        return
     
     # Compute class weights
     class_weights = compute_class_weights(train_dataset)
@@ -348,6 +380,9 @@ if __name__ == "__main__":
     parser.add_argument('--max_epochs', type=int, default=200)
     parser.add_argument('--early_stop_patience', type=int, default=20)
     parser.add_argument('--output_dir', type=str, default='models/gcn_checkpoints')
+    parser.add_argument('--viewpoint', type=str, default=None, 
+                        choices=['front', 'left', 'right', None],
+                        help='Train on specific viewpoint only (front/left/right) or all viewpoints (default)')
     
     args = parser.parse_args()
     
@@ -360,5 +395,6 @@ if __name__ == "__main__":
         weight_decay=args.weight_decay,
         max_epochs=args.max_epochs,
         early_stop_patience=args.early_stop_patience,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        viewpoint_filter=args.viewpoint
     )

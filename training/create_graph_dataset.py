@@ -11,10 +11,16 @@ import mediapipe as mp
 import numpy as np
 from pathlib import Path
 from tqdm import tqdm
+import sys
+from pathlib import Path
+
+# Add current directory to path to allow imports
+sys.path.append(str(Path(__file__).parent))
+
 from torch_geometric.data import Data
 from ultralytics import YOLO
-from training.graph_augmentation import augment_graph_conservative
-from training.pose_features import extract_geometric_features
+from graph_augmentation import augment_graph_conservative
+from pose_features import extract_geometric_features
 
 
 # MediaPipe setup
@@ -25,9 +31,9 @@ pose_detector = mp_pose.Pose(
     min_detection_confidence=0.5
 )
 
-# Stick detector setup (YOLOv8-Pose model with 2 keypoints: grip and tip)
+# Stick detector setup
 STICK_DETECTOR_PATH = "runs/pose/arnis_stick_detector/weights/best.pt"
-stick_detector = YOLO(STICK_DETECTOR_PATH)
+stick_detector = None
 
 # Class mapping (13 classes)
 CLASS_NAMES = [
@@ -123,26 +129,31 @@ def extract_pose_keypoints(image_path):
     
     return keypoints
 
+def load_stick_detector():
+    global stick_detector
+    if stick_detector is None:
+        try:
+            print(f"Loading stick detector from {STICK_DETECTOR_PATH}...")
+            stick_detector = YOLO(STICK_DETECTOR_PATH)
+        except Exception as e:
+            print(f"Warning: Failed to load stick detector: {e}")
+            stick_detector = None
 
 def detect_stick(image_path):
     """
     Detect stick using YOLOv8-Pose and extract 2 keypoints (grip and tip).
-    
-    Returns:
-        np.array of shape [2, 3] (grip and tip with x, y, confidence)
     """
+    if stick_detector is None:
+        # Return dummy nodes if detector not loaded or skipped
+        return np.array([[0.5, 0.5, 0.0], [0.5, 0.5, 0.0]], dtype=np.float32)
+
     try:
         results = stick_detector.predict(str(image_path), verbose=False)
         
         # Check if stick detected (keypoints available)
         if results[0].keypoints is not None and len(results[0].keypoints.data) > 0:
-            # Get first detection (highest confidence)
-            # keypoints.data shape: [num_detections, num_keypoints, 3]
-            # We expect [1, 2, 3] for one stick with 2 keypoints (grip, tip)
             kpts = results[0].keypoints.data[0].cpu().numpy()  # Shape: [2, 3]
             
-            # kpts contains [grip, tip] each with [x, y, confidence]
-            # Normalize coordinates (YOLO returns pixel coordinates)
             image = cv2.imread(str(image_path))
             h, w = image.shape[:2]
             
@@ -152,36 +163,11 @@ def detect_stick(image_path):
             
             return np.array([stick_grip, stick_tip], dtype=np.float32)
         else:
-            # No stick detected → dummy nodes at center with 0 confidence
             return np.array([[0.5, 0.5, 0.0], [0.5, 0.5, 0.0]], dtype=np.float32)
             
     except Exception as e:
-        print(f"Warning: Stick detection failed for {image_path}: {e}")
-        # Return dummy nodes on error
+        # print(f"Warning: Stick detection failed for {image_path}: {e}")
         return np.array([[0.5, 0.5, 0.0], [0.5, 0.5, 0.0]], dtype=np.float32)
-
-
-# def detect_stick_heuristic(image_path, pose_keypoints):
-#     """
-#     FALLBACK: Heuristic-based stick detection (commented for now).
-#     Uses wrist positions to estimate stick location.
-#     """
-#     # Get wrist keypoints (15=left, 16=right)
-#     left_wrist = pose_keypoints[15]
-#     right_wrist = pose_keypoints[16]
-#     
-#     # Use wrist with higher visibility
-#     if left_wrist[2] > right_wrist[2]:
-#         wrist = left_wrist
-#     else:
-#         wrist = right_wrist
-#     
-#     # Estimate stick endpoints (simple heuristic)
-#     stick_length = 0.3  # Normalized length
-#     stick_top = [wrist[0], wrist[1] - stick_length, wrist[2]]
-#     stick_bottom = [wrist[0], wrist[1] + stick_length, wrist[2]]
-#     
-#     return np.array([stick_top, stick_bottom], dtype=np.float32)
 
 
 def build_graph(pose_keypoints, stick_nodes, label, viewpoint):
@@ -222,15 +208,15 @@ def build_graph(pose_keypoints, stick_nodes, label, viewpoint):
     return graph
 
 
-def process_dataset(dataset_root, output_root, augment=False):
+def process_dataset(dataset_root, output_root, augment=False, skip_stick=False):
     """
     Process entire dataset_split/ directory.
-    
-    Args:
-        dataset_root: Path to dataset_split/
-        output_root: Path to dataset_graphs/
-        augment: Whether to apply augmentation (only for train set)
     """
+    if not skip_stick:
+        load_stick_detector()
+    else:
+        print("Skipping stick detection (using dummy nodes).")
+
     dataset_root = Path(dataset_root)
     output_root = Path(output_root)
     
@@ -329,6 +315,11 @@ if __name__ == "__main__":
         action='store_true',
         help='Apply augmentation to training set (4x multiplier)'
     )
+    parser.add_argument(
+        '--skip_stick',
+        action='store_true',
+        help='Skip stick detection (use dummy nodes)'
+    )
     
     args = parser.parse_args()
     
@@ -338,11 +329,11 @@ if __name__ == "__main__":
     print(f"Dataset root: {args.dataset_root}")
     print(f"Output root: {args.output_root}")
     print(f"Augmentation: {'Enabled (4x)' if args.augment else 'Disabled'}")
-    print(f"Stick detector: {STICK_DETECTOR_PATH}")
+    print(f"Stick detection: {'Skipped' if args.skip_stick else 'Enabled'}")
     print("=" * 60)
     
     # Process dataset
-    stats = process_dataset(args.dataset_root, args.output_root, args.augment)
+    stats = process_dataset(args.dataset_root, args.output_root, args.augment, args.skip_stick)
     
     # Print statistics
     print("\n" + "=" * 60)
