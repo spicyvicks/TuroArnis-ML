@@ -153,7 +153,7 @@ def train_baseline_gcn(viewpoint_filter=None, epochs=150, lr=0.001, hidden_dim=1
     
     # Learning rate scheduler
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=15
+        optimizer, mode='max', factor=0.5, patience=15, verbose=True
     )
     
     best_acc = 0

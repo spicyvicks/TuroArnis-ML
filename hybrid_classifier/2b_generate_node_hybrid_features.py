@@ -80,21 +80,22 @@ def extract_raw_features(image_path, stick_detector):
     if not results.pose_landmarks:
         return None
     
-    # Get keypoints (normalized)
+    # Get keypoints (normalized 3D world coordinates)
     kpts = []
     for lm in results.pose_landmarks.landmark:
-        kpts.append([lm.x, lm.y, lm.visibility])
+        kpts.append([lm.x, lm.y, lm.z, lm.visibility])
     kpts = np.array(kpts)
     
     # Extract stick
     stick_results = stick_detector(str(image_path), verbose=False)[0]
     if stick_results.keypoints is not None and len(stick_results.keypoints.data) > 0:
         stick_kpts = stick_results.keypoints.data[0].cpu().numpy()
-        stick_grip = [stick_kpts[0, 0] / w, stick_kpts[0, 1] / h, stick_kpts[0, 2]]
-        stick_tip = [stick_kpts[1, 0] / w, stick_kpts[1, 1] / h, stick_kpts[1, 2]]
+        # Add z=0 for stick (YOLO doesn't provide depth)
+        stick_grip = [stick_kpts[0, 0] / w, stick_kpts[0, 1] / h, 0.0, stick_kpts[0, 2]]
+        stick_tip = [stick_kpts[1, 0] / w, stick_kpts[1, 1] / h, 0.0, stick_kpts[1, 2]]
     else:
-        stick_grip = [0.5, 0.5, 0.0]
-        stick_tip = [0.5, 0.5, 0.0]
+        stick_grip = [0.5, 0.5, 0.0, 0.0]
+        stick_tip = [0.5, 0.5, 0.0, 0.0]
     
     stick_keypoints = np.array([stick_grip, stick_tip])
     
@@ -190,27 +191,27 @@ def compute_hybrid_features(raw_features, templates, viewpoint, class_name):
 
 def extract_node_features(pose_keypoints, stick_keypoints):
     """
-    Extract per-node features.
-    Each node gets: [x, y, visibility, local_angle, distance_to_hip]
+    Extract per-node features with 3D coordinates.
+    Each node gets: [x, y, z, visibility, distance_to_hip_3d, angle_from_hip]
     """
     # Combine all nodes (33 pose + 2 stick)
     all_keypoints = np.vstack([pose_keypoints, stick_keypoints])
     
-    # Compute hip center for reference
-    hip_center = (pose_keypoints[23, :2] + pose_keypoints[24, :2]) / 2
+    # Compute hip center for reference (3D)
+    hip_center = (pose_keypoints[23, :3] + pose_keypoints[24, :3]) / 2  # [x, y, z]
     
     node_features = []
     for i, kpt in enumerate(all_keypoints):
-        x, y, vis = kpt
+        x, y, z, vis = kpt
         
-        # Distance to hip center
-        dist_to_hip = np.sqrt((x - hip_center[0])**2 + (y - hip_center[1])**2)
+        # 3D Distance to hip center
+        dist_to_hip = np.sqrt((x - hip_center[0])**2 + (y - hip_center[1])**2 + (z - hip_center[2])**2)
         
-        # Angle from hip center
+        # Angle from hip center (2D projection for compatibility)
         angle_from_hip = np.degrees(np.arctan2(y - hip_center[1], x - hip_center[0]))
         
-        # Node feature: [x, y, vis, dist_to_hip, angle_from_hip]
-        node_features.append([x, y, vis, dist_to_hip, angle_from_hip])
+        # Node feature: [x, y, z, vis, dist_to_hip_3d, angle_from_hip]
+        node_features.append([x, y, z, vis, dist_to_hip, angle_from_hip])
     
     return np.array(node_features, dtype=np.float32)
 
