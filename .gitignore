@@ -13,3 +13,11 @@ models/
 /models
 dataset_stick/
 /dataset_stick
+dataset_organized/
+/dataset_organized
+dataset_augmented/
+/dataset_augmented
+debug_output/
+/debug_output
+features_train_split.csv
+features_test_split.csv
