@@ -1,0 +1,29 @@
+# Deployment Package Requirements
+# Compatible with PyTorch 2.10.0 CPU environment
+
+# Core ML/DL frameworks
+torch==2.10.0+cpu
+torch-geometric==2.4.0
+torch-scatter==2.1.2+pt21cpu
+torch-sparse==0.6.18+pt21cpu
+torchaudio==2.10.0
+torchvision==0.25.0
+
+# Computer Vision
+opencv-python==4.13.0.92
+mediapipe==0.10.14
+ultralytics==8.3.252
+
+# Numerical computing
+numpy==1.26.4
+scipy==1.17.0
+
+# Desktop GUI (PyQt6)
+PyQt6==6.8.0
+
+# Packaging
+pyinstaller==6.12.0
+
+# Optional: Model optimization
+# onnx==1.17.0
+# onnxruntime==1.20.0

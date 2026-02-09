@@ -226,8 +226,9 @@ def train_hybrid_gcn(viewpoint_filter=None, epochs=150, lr=0.001, hidden_dim=256
     )
     
     best_acc = 0
-    patience = 30
+    patience = 20  # Reduced from 30 for faster stopping
     patience_counter = 0
+    overfitting_threshold = 0.20  # Stop if gap > 20%
     
     for epoch in range(epochs):
         # Train
@@ -294,6 +295,13 @@ def train_hybrid_gcn(viewpoint_filter=None, epochs=150, lr=0.001, hidden_dim=256
         scheduler.step(test_acc)
         
         print(f"Epoch {epoch+1:3d} | Train: {train_acc:.4f} | Test: {test_acc:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}")
+        
+        # Check for severe overfitting
+        gap = train_acc - test_acc
+        if gap > overfitting_threshold:
+            print(f"\n⚠️  OVERFITTING DETECTED: Gap = {gap:.2%} (Train: {train_acc:.2%}, Test: {test_acc:.2%})")
+            print(f"Stopping training to prevent wasted time.")
+            break
         
         # Early stopping
         if test_acc > best_acc:
