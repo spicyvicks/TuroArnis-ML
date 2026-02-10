@@ -101,3 +101,8 @@ These files are needed for full implementation but not included in this package:
 - [ ] ONNX export for cross-platform compatibility
 - [ ] Auto-viewpoint detection model
 - [ ] Mobile deployment (TensorFlow Lite)
+
+### v1.1 (2026-02-11)
+- Updated Class List (Removed 'neutral_stance', 13 -> 12 classes)
+- Syncing latest Hybrid GCN V2 models
+- Updated feature extraction logic

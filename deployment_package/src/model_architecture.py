@@ -8,6 +8,21 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, global_mean_pool
 
+CLASS_NAMES = [
+    'crown_thrust_correct', 'left_chest_thrust_correct', 'left_elbow_block_correct',
+    'left_eye_thrust_correct', 'left_knee_block_correct', 'left_temple_block_correct',
+    'right_chest_thrust_correct', 'right_elbow_block_correct',
+    'right_eye_thrust_correct', 'right_knee_block_correct', 'right_temple_block_correct',
+    'solar_plexus_thrust_correct'
+]
+
+SKELETON_EDGES = [
+    (11, 12), (12, 11), (11, 23), (23, 11), (12, 24), (24, 12),
+    (23, 24), (24, 23), (11, 13), (13, 11), (13, 15), (15, 13),
+    (12, 14), (14, 12), (14, 16), (16, 14), (23, 25), (25, 23),
+    (25, 27), (27, 25), (24, 26), (26, 24), (26, 28), (28, 26),
+    (15, 33), (33, 15), (16, 33), (33, 16), (33, 34), (34, 33)
+]
 
 class HybridGCN(nn.Module):
     """
@@ -94,22 +109,3 @@ class HybridGCN(nn.Module):
         # Classification
         out = self.fc(combined)
         return out
-
-
-# Skeleton edges for graph construction
-SKELETON_EDGES = [
-    (11, 12), (12, 11), (11, 23), (23, 11), (12, 24), (24, 12),
-    (23, 24), (24, 23), (11, 13), (13, 11), (13, 15), (15, 13),
-    (12, 14), (14, 12), (14, 16), (16, 14), (23, 25), (25, 23),
-    (25, 27), (27, 25), (24, 26), (26, 24), (26, 28), (28, 26),
-    (15, 33), (33, 15), (16, 33), (33, 16), (33, 34), (34, 33)
-]
-
-# Class names
-CLASS_NAMES = [
-    'crown_thrust_correct', 'left_chest_thrust_correct', 'left_elbow_block_correct',
-    'left_eye_thrust_correct', 'left_knee_block_correct', 'left_temple_block_correct',
-    'neutral_stance', 'right_chest_thrust_correct', 'right_elbow_block_correct',
-    'right_eye_thrust_correct', 'right_knee_block_correct', 'right_temple_block_correct',
-    'solar_plexus_thrust_correct'
-]

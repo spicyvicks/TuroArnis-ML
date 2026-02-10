@@ -1,30 +1,26 @@
-"""
-Analyze Hybrid GCN Performance
-Generates classification report and confusion matrix for the trained model
-"""
-
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix
 from pathlib import Path
-import sys
-
-# Add parent directory to path to import model
-sys.path.append(str(Path(__file__).parent.parent))
-from models.spatial_gcn import SpatialGCN
-from training.train_gcn import CLASS_NAMES
 from torch_geometric.data import Data
+from torch_geometric.nn import GCNConv, global_mean_pool
 
 # Config
-# Check which model exists or passed as arg
-MODEL_PATH = Path("hybrid_classifier/models/hybrid_gcn.pth") 
-if not MODEL_PATH.exists():
-    MODEL_PATH = Path("hybrid_classifier/models/hybrid_gcn_front.pth")
-
 OUTPUT_DIR = Path("hybrid_classifier/analysis")
-HYBRID_FEATURES_DIR = Path("hybrid_classifier/hybrid_features")
+HYBRID_FEATURES_DIR = Path("hybrid_classifier/hybrid_features_v2")
+MODELS_DIR = Path("hybrid_classifier/models")
+
+CLASS_NAMES = [
+    'crown_thrust_correct', 'left_chest_thrust_correct', 'left_elbow_block_correct',
+    'left_eye_thrust_correct', 'left_knee_block_correct', 'left_temple_block_correct',
+    'right_chest_thrust_correct', 'right_elbow_block_correct',
+    'right_eye_thrust_correct', 'right_knee_block_correct', 'right_temple_block_correct',
+    'solar_plexus_thrust_correct'
+]
 
 # Skeleton edges (same as original GCN)
 SKELETON_EDGES = [
@@ -36,53 +32,114 @@ SKELETON_EDGES = [
     (15, 33), (33, 15), (16, 33), (33, 16), (33, 34), (34, 33)
 ]
 
+class HybridGCN(nn.Module):
+    """
+    GCN with Node-Specific Features + Global Hybrid Context
+    """
+    def __init__(self, node_in_channels, hybrid_in_channels, hidden_channels, num_classes, num_layers=3, dropout=0.5, embedding_dim=8):
+        super().__init__()
+        
+        self.num_layers = num_layers
+        self.dropout = dropout
+        self.embedding_dim = embedding_dim
+        
+        # Node identity embeddings (35 nodes: 0-34)
+        self.node_embedding = nn.Embedding(35, embedding_dim)
+        
+        # GCN layers for node features (geometric + embedding)
+        gcn_input_dim = node_in_channels + embedding_dim
+        self.convs = nn.ModuleList()
+        self.bns = nn.ModuleList()
+        
+        # Input layer
+        self.convs.append(GCNConv(gcn_input_dim, hidden_channels))
+        self.bns.append(nn.BatchNorm1d(hidden_channels))
+        
+        # Hidden layers
+        for _ in range(num_layers - 1):
+            self.convs.append(GCNConv(hidden_channels, hidden_channels))
+            self.bns.append(nn.BatchNorm1d(hidden_channels))
+        
+        # MLP for global hybrid features
+        self.hybrid_fc1 = nn.Linear(hybrid_in_channels, hidden_channels)
+        self.hybrid_bn1 = nn.BatchNorm1d(hidden_channels)
+        self.hybrid_fc2 = nn.Linear(hidden_channels, hidden_channels)
+        self.hybrid_bn2 = nn.BatchNorm1d(hidden_channels)
+        
+        # Fusion layer
+        self.fusion_fc = nn.Linear(hidden_channels * 2, hidden_channels)
+        self.fusion_bn = nn.BatchNorm1d(hidden_channels)
+        
+        # Classification head
+        self.fc = nn.Linear(hidden_channels, num_classes)
+        
+    def forward(self, x, edge_index, batch, hybrid_features):
+        num_nodes_per_graph = 35
+        num_graphs = batch.max().item() + 1
+        node_indices = torch.arange(num_nodes_per_graph, device=x.device).repeat(num_graphs)
+        
+        node_emb = self.node_embedding(node_indices)
+        x = torch.cat([x, node_emb], dim=1)
+        
+        for i in range(self.num_layers):
+            x = self.convs[i](x, edge_index)
+            x = self.bns[i](x)
+            x = F.relu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        x_graph = global_mean_pool(x, batch)
+        
+        h = self.hybrid_fc1(hybrid_features)
+        h = self.hybrid_bn1(h)
+        h = F.relu(h)
+        h = F.dropout(h, p=self.dropout, training=self.training)
+        
+        h = self.hybrid_fc2(h)
+        h = self.hybrid_bn2(h)
+        h = F.relu(h)
+        h = F.dropout(h, p=self.dropout, training=self.training)
+        
+        combined = torch.cat([x_graph, h], dim=1)
+        combined = self.fusion_fc(combined)
+        combined = self.fusion_bn(combined)
+        combined = F.relu(combined)
+        combined = F.dropout(combined, p=self.dropout, training=self.training)
+        
+        out = self.fc(combined)
+        return out
+
 def load_hybrid_graph_data(viewpoint_filter=None):
     """Load hybrid features and convert to graph format"""
-    
-    # If viewpoint_filter is None, look for 'test_features.pt' (combined)
-    # If viewpoint_filter is 'front', look for 'test_features_front.pt'
-    if viewpoint_filter:
-        suffix = f"_{viewpoint_filter}"
-    else:
-        suffix = ""
-    
-    train_file = HYBRID_FEATURES_DIR / f"train_features{suffix}.pt"
+    suffix = f"_{viewpoint_filter}" if viewpoint_filter else ""
     test_file = HYBRID_FEATURES_DIR / f"test_features{suffix}.pt"
     
     print(f"Loading features from: {test_file}")
     
-    if not train_file.exists():
-        raise FileNotFoundError(f"{train_file} not found. Run 2_generate_hybrid_features.py first")
+    if not test_file.exists():
+        raise FileNotFoundError(f"{test_file} not found. Run 2b_generate_node_hybrid_features.py first")
     
-    train_data = torch.load(train_file)
     test_data = torch.load(test_file)
     
-    # Convert to graph format
-    train_graphs = []
-    for i in range(len(train_data['features'])):
-        hybrid_feat = train_data['features'][i]
-        label = train_data['labels'][i]
-        node_features = hybrid_feat.unsqueeze(0).repeat(35, 1)
-        edge_index = torch.tensor(SKELETON_EDGES, dtype=torch.long).t()
-        graph = Data(x=node_features, edge_index=edge_index, y=label)
-        train_graphs.append(graph)
-    
     test_graphs = []
-    for i in range(len(test_data['features'])):
-        hybrid_feat = test_data['features'][i]
+    for i in range(len(test_data['node_features'])):
+        node_feat = test_data['node_features'][i]
+        hybrid_feat = test_data['hybrid_features'][i]
         label = test_data['labels'][i]
-        node_features = hybrid_feat.unsqueeze(0).repeat(35, 1)
+        
         edge_index = torch.tensor(SKELETON_EDGES, dtype=torch.long).t()
-        graph = Data(x=node_features, edge_index=edge_index, y=label)
+        graph = Data(x=node_feat, edge_index=edge_index, y=label, hybrid=hybrid_feat)
         test_graphs.append(graph)
     
-    return train_graphs, test_graphs
+    return test_graphs
 
-def analyze_model():
+def analyze_model(viewpoint=None):
     """Load model and generate performance report"""
     
-    if not MODEL_PATH.exists():
-        print(f"Error: Model not found at {MODEL_PATH}")
+    suffix = f"_{viewpoint}" if viewpoint else ""
+    model_path = MODELS_DIR / f"hybrid_gcn_v2{suffix}.pth"
+    
+    if not model_path.exists():
+        print(f"Error: Model not found at {model_path}")
         return
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -90,18 +147,21 @@ def analyze_model():
     
     # Load data
     print("Loading test data...")
-    _, test_graphs = load_hybrid_graph_data(None)
+    test_graphs = load_hybrid_graph_data(viewpoint)
     
-    # Load model
-    print("Loading model...")
-    checkpoint = torch.load(MODEL_PATH, map_location=device)
-    num_features = checkpoint['num_features']
+    # Load model checkpoint
+    print(f"Loading model from {model_path}...")
+    checkpoint = torch.load(model_path, map_location=device)
     
-    model = SpatialGCN(
-        in_channels=num_features,
-        hidden_channels=64,
+    # Initialize model with saved config
+    model = HybridGCN(
+        node_in_channels=checkpoint['node_feat_dim'],
+        hybrid_in_channels=checkpoint['hybrid_feat_dim'],
+        hidden_channels=checkpoint['hidden_dim'],
         num_classes=len(CLASS_NAMES),
-        dropout=0.5
+        num_layers=checkpoint.get('num_layers', 3),
+        dropout=checkpoint['dropout'],
+        embedding_dim=checkpoint.get('embedding_dim', 8)
     ).to(device)
     
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -118,15 +178,18 @@ def analyze_model():
     with torch.no_grad():
         for batch in test_loader:
             batch = batch.to(device)
-            out = model(batch.x, batch.edge_index, batch.batch)
+            hybrid_batch = batch.hybrid.view(batch.num_graphs, -1)
+            
+            out = model(batch.x, batch.edge_index, batch.batch, hybrid_batch)
             pred = out.argmax(dim=1)
             
             y_true.extend(batch.y.cpu().numpy())
             y_pred.extend(pred.cpu().numpy())
             
     # generate report
+    title = f"Hybrid GCN V2 ({viewpoint.upper() if viewpoint else 'ALL'})"
     print("\n" + "="*60)
-    print("Classification Report (Front View)")
+    print(f"Classification Report: {title}")
     print("="*60)
     print(classification_report(y_true, y_pred, target_names=CLASS_NAMES, zero_division=0))
     
@@ -137,15 +200,23 @@ def analyze_model():
     plt.figure(figsize=(12, 10))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=CLASS_NAMES, yticklabels=CLASS_NAMES)
-    plt.title('Hybrid GCN Confusion Matrix (Front View)')
+    plt.title(f'Confusion Matrix: {title}')
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    plt.savefig(OUTPUT_DIR / 'confusion_matrix_front.png')
-    print(f"\nConfusion matrix saved to {OUTPUT_DIR / 'confusion_matrix_front.png'}")
+    out_file = OUTPUT_DIR / f'confusion_matrix{suffix}.png'
+    plt.savefig(out_file)
+    print(f"\nConfusion matrix saved to {out_file}")
 
 if __name__ == "__main__":
-    analyze_model()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--viewpoint', type=str, default=None,
+                        choices=['front', 'left', 'right'],
+                        help='Analyze specific viewpoint model')
+    args = parser.parse_args()
+    
+    analyze_model(args.viewpoint)

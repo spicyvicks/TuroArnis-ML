@@ -14,10 +14,14 @@ from pathlib import Path
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GCNConv, global_mean_pool
-import sys
 
-sys.path.append(str(Path(__file__).parent.parent))
-from training.train_gcn import CLASS_NAMES
+CLASS_NAMES = [
+    'crown_thrust_correct', 'left_chest_thrust_correct', 'left_elbow_block_correct',
+    'left_eye_thrust_correct', 'left_knee_block_correct', 'left_temple_block_correct',
+    'right_chest_thrust_correct', 'right_elbow_block_correct',
+    'right_eye_thrust_correct', 'right_knee_block_correct', 'right_temple_block_correct',
+    'solar_plexus_thrust_correct'
+]
 
 # Config
 HYBRID_FEATURES_DIR = Path("hybrid_classifier/hybrid_features_v2")
@@ -230,11 +234,19 @@ def train_hybrid_gcn(viewpoint_filter=None, epochs=150, lr=0.001, hidden_dim=256
     patience_counter = 0
     overfitting_threshold = 0.20  # Stop if gap > 20%
     
+    # Initialize history
+    history = {
+        'train_loss': [],
+        'train_acc': [],
+        'test_acc': []
+    }
+    
     for epoch in range(epochs):
         # Train
         model.train()
         train_correct = 0
         train_total = 0
+        running_loss = 0.0
         
         for batch in train_loader:
             batch = batch.to(device)
@@ -271,8 +283,10 @@ def train_hybrid_gcn(viewpoint_filter=None, epochs=150, lr=0.001, hidden_dim=256
             pred = out.argmax(dim=1)
             train_correct += (pred == batch.y).sum().item()
             train_total += batch.y.size(0)
+            running_loss += loss.item() * batch.y.size(0)
         
         train_acc = train_correct / train_total
+        epoch_loss = running_loss / train_total
         
         # Test
         model.eval()
@@ -291,10 +305,15 @@ def train_hybrid_gcn(viewpoint_filter=None, epochs=150, lr=0.001, hidden_dim=256
         
         test_acc = test_correct / test_total
         
+        # Update history
+        history['train_loss'].append(epoch_loss)
+        history['train_acc'].append(train_acc)
+        history['test_acc'].append(test_acc)
+        
         # Update scheduler
         scheduler.step(test_acc)
         
-        print(f"Epoch {epoch+1:3d} | Train: {train_acc:.4f} | Test: {test_acc:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}")
+        print(f"Epoch {epoch+1:3d} | Loss: {epoch_loss:.4f} | Train: {train_acc:.4f} | Test: {test_acc:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}")
         
         # Check for severe overfitting
         gap = train_acc - test_acc
@@ -325,6 +344,14 @@ def train_hybrid_gcn(viewpoint_filter=None, epochs=150, lr=0.001, hidden_dim=256
             if patience_counter >= patience:
                 print(f"\nEarly stopping at epoch {epoch+1}")
                 break
+    
+    # Save history to JSON
+    import json
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = f"_{viewpoint_filter}" if viewpoint_filter else ""
+    with open(OUTPUT_DIR / f"history{suffix}.json", 'w') as f:
+        json.dump(history, f)
+    print(f"History saved to {OUTPUT_DIR / f'history{suffix}.json'}")
     
     print(f"\n{'='*60}")
     print(f"Best Test Accuracy: {best_acc:.4f}")

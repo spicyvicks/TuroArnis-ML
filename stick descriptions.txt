@@ -1,72 +1,9 @@
-crown_thrust_correct
-tip is above head
-left foot forward 
-right foot back
-right arm extends forward bent, right hand level to eyes
-stick goes forward completely, higher than head 
-
-left_chest_thrust_correct
-left foot forward
-right foot back
-right arm extends forward towards the left no bend, right hand level to chest
-palm faces right
-stick goes forward, tip level to chest, towards the left 
-
-left_elbow_block_correct
-right foot forward
-left foot back
-right arm extends forward towards the left no bend, right hand level to elbow
-palm faces right
-stick goes forward, tip level to elbow, towards the left 
-
-left_eye_thrust_correct
-left foot forward
-right foot back
-right arm extends bends a lil bit, forward towards the left, right hand is level to eye
-palm faces down
-stick goes forward, tip is level to eye, towards the left eye
-
-left_knee_block_correct
-left foot forward
-right foot back
-right arm extends forward towards the left, downwards to foot, right hand is level to hip
-palm faces down
-stick goes forward, tip level to foot, towards the left
-
 left_temple_block_correct
-right foot forward
-left foot back
+
+foot distance similar to shoulder distance
 right arm extends forward, forward towards the left, right hand is level to eye
 palm faces up
 stick goes forward, tip is level to eye, towards the left eye
-
-right_chest_thrust_correct
-right foot forward
-left foot back
-right arm bends forward towards the left, right hand level to chest
-palm faces up
-stick goes forward, tip level to chest, towards the right
-
-right_elbow_block_correct
-right foot forward
-left foot back
-right arm extends forward no bend, right hand level to elbow
-palm faces down
-stick goes forward, tip level to elbow, towards the right 
-
-right_eye_thrust_correct
-left foot forward
-right foot back
-right arm extends bends a lil bit, forward towards the left, right hand is level to eye
-palm faces up
-stick goes forward, tip is level to eye, towards the left right
-
-right_knee_block_correct
-right foot forward
-left foot back
-right arm extends forwards and downwards to foot, right hand is level to hip
-palm faces up
-stick goes forward, tip level to foot, towards the right
 
 right_temple_block_correct
 left foot forward
@@ -75,8 +12,71 @@ right arm extends forward, forward towards the left, right hand is level to eye
 palm faces down
 stick goes forward, tip is level to eye, towards the right eye
 
+left_elbow_block_correct
+right foot forward
+left foot back
+right arm extends forward towards the left no bend, right hand level to elbow
+palm faces right
+stick goes forward, tip level to elbow, towards the left 
+
+right_elbow_block_correct
+left foot forward
+left foot back
+right arm extends forward no bend, right hand level to elbow
+palm faces down
+stick goes forward, tip level to elbow, towards the right 
+
 solar_plexus_thrust_correct
-left foot forward 
+right foot forward 
 right foot back
 right arm extends downwards straight, right hand level to hip
 stick goes forward completely, level to hip 
+
+left_chest_thrust_correct
+left foot forward
+right foot back
+right arm extends forward towards the left no bend, right hand level to chest
+palm faces right
+stick goes forward, tip level to chest, towards the left 
+
+right_chest_thrust_correct
+right foot forward
+left foot back
+right arm bends forward towards the left, right hand level to chest
+palm faces up
+stick goes forward, tip level to chest, towards the right
+
+left_knee_block_correct
+left foot forward
+right foot back
+right arm extends forward towards the left, downwards to foot, right hand is level to hip
+palm faces down
+stick goes forward, tip level to foot, towards the left
+
+right_knee_block_correct
+right foot forward
+left foot back
+right arm extends forwards and downwards to foot, right hand is level to hip
+palm faces up
+stick goes forward, tip level to foot, towards the right
+
+left_eye_thrust_correct
+left foot forward
+right foot back
+right arm extends bends a lil bit, forward towards the left, right hand is level to eye
+palm faces down
+stick goes forward, tip is level to eye, towards the left eye
+
+right_eye_thrust_correct
+right foot forward
+right foot back
+right arm extends bends a lil bit, forward towards the left, right hand is level to eye
+palm faces up
+stick goes forward, tip is level to eye, towards the left right
+
+crown_thrust_correct
+tip is above head
+left foot forward 
+right foot back
+right arm extends forward bent, right hand level to eyes
+stick goes forward completely, higher than head
