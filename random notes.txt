@@ -1,0 +1,4 @@
+The authors recommended that an erroneous
+bounding box be used to abstract a high-quality
+solitary person region using the Symmetric
+Spatial Transformer Network (SSTN)

@@ -1,0 +1,106 @@
+STICK DETECTION METHOD 4 - Adaptive Stick Correction
+=====================================================
+Used in: app/computer_vision/pose_analyzer.py (lines ~405-493)
+
+PURPOSE
+-------
+Corrects the raw YOLO stick detection (grip + tip keypoints) using body 
+proportions from MediaPipe. Raw YOLO often gets the stick LENGTH wrong 
+(too short or too long) but gets the DIRECTION right. This method keeps 
+YOLO's direction and fixes the length using body landmarks.
+
+
+WHY IT'S BETTER THAN RAW YOLO
+------------------------------
+1. Raw YOLO stick tip position is noisy and inconsistent frame-to-frame.
+2. Raw YOLO doesn't know real-world stick length (0.71m standard Arnis stick).
+3. Method 4 anchors stick length to body proportions, which are stable.
+4. Adapts to camera viewpoint (front vs side) automatically.
+
+
+THE ALGORITHM (5 STEPS)
+------------------------
+
+STEP 1: Get Raw YOLO Endpoints
+  - Run custom YOLO stick detector on frame
+  - Get grip_pt (x,y) and tip_pt (x,y)
+  - These give us the DIRECTION of the stick (reliable)
+  - But the LENGTH may be wrong
+
+STEP 2: Get MediaPipe Body Landmarks
+  - Need: Left/Right Shoulder (11,12), Left/Right Hip (23,24),
+          Left/Right Elbow (13,14), Left/Right Wrist (15,16)
+  - Convert from normalized coords to absolute pixel coords
+
+STEP 3: Determine Viewpoint (Front vs Side)
+  - Calculate: shoulder_width = distance(left_shoulder, right_shoulder)
+  - Calculate: avg_torso_px = average(left_torso_length, right_torso_length)
+    where torso_length = distance(shoulder, hip) on each side
+  - Calculate: view_ratio = shoulder_width / avg_torso_px
+  - If view_ratio > 0.45 → FRONT VIEW (shoulders appear wide)
+  - If view_ratio <= 0.45 → SIDE VIEW (shoulders appear narrow)
+
+STEP 4: Calculate Corrected Stick Length (in pixels)
+  
+  IF FRONT VIEW:
+    - Use Torso Scaling
+    - stick_px = avg_torso_px * 1.5
+    - Why: Real stick (0.71m) is ~1.42x average torso (0.5m). 
+      Using 1.5 for slight overestimate/visibility.
+    - Why torso not forearm: In front view, the forearm foreshortens 
+      (appears shorter than reality), but torso height stays stable.
+
+  IF SIDE VIEW:
+    - Use Forearm Scaling with 3D world landmarks
+    - Identify which arm holds the stick (closest wrist to grip point)
+    - Get 3D forearm length from MediaPipe world landmarks:
+        forearm_m = distance_3d(wrist_3d, elbow_3d)
+    - Calculate scaling ratio:
+        len_ratio = stick_length_meters(0.71) / forearm_m
+    - Get 2D forearm length in pixels:
+        forearm_px = distance_2d(wrist_2d, elbow_2d)
+    - Final: stick_px = forearm_px * len_ratio
+    - Why forearm not torso: In side view, the torso foreshortens, 
+      but the arm holding the stick is visible and accurate.
+
+STEP 5: Project Corrected Tip
+  - Get direction from raw YOLO: direction = normalize(tip - grip)
+  - Project new tip: corrected_tip = grip + (direction * stick_px)
+  - Final output: (grip_pt, corrected_tip)
+  - Grip stays at raw YOLO position (anchored to wrist, reliable)
+  - Only the tip is corrected
+
+
+INPUTS NEEDED
+--------------
+- Raw YOLO stick detection: grip_pt, tip_pt (pixel coordinates)
+- MediaPipe 2D landmarks: shoulders, hips, elbows, wrists (normalized)
+- MediaPipe 3D world landmarks: wrists, elbows (meters, for side view only)
+- Image dimensions: to convert normalized → pixel coordinates
+
+
+CONSTANTS
+---------
+- Stick length: 0.71 meters (standard Arnis stick)
+- Front/Side threshold: view_ratio > 0.45
+- Torso multiplier: 1.5 (for front view)
+
+
+FALLBACK
+--------
+If correction fails (missing landmarks, math error), use raw YOLO endpoints.
+
+
+HOW TO USE THIS FOR GCN TRAINING
+----------------------------------
+When generating features for GCN training (e.g., 2b_generate_node_hybrid_features.py):
+
+1. Detect stick with YOLO → get raw grip and tip
+2. Run MediaPipe on same image → get body landmarks  
+3. Apply Method 4 correction to get corrected tip
+4. Normalize corrected endpoints: 
+     grip_normalized = (grip_x / img_width, grip_y / img_height)
+     tip_normalized  = (corrected_tip_x / img_width, corrected_tip_y / img_height)
+5. Use these as stick keypoints (nodes 33, 34) for the GCN graph
+
+This ensures the GCN training data matches what the app produces at runtime.

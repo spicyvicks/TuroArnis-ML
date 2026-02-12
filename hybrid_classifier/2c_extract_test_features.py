@@ -24,6 +24,7 @@ STICK_MODEL = "runs/pose/arnis_stick_detector/weights/best.pt"
 CLASS_NAMES = [
     'crown_thrust_correct', 'left_chest_thrust_correct', 'left_elbow_block_correct',
     'left_eye_thrust_correct', 'left_knee_block_correct', 'left_temple_block_correct',
+    'neutral_stance',
     'right_chest_thrust_correct', 'right_elbow_block_correct',
     'right_eye_thrust_correct', 'right_knee_block_correct', 'right_temple_block_correct',
     'solar_plexus_thrust_correct'
@@ -52,6 +53,104 @@ def calculate_angle(p1, p2, p3):
 def calculate_distance(p1, p2):
     """Euclidean distance between two points"""
     return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
+
+
+def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img_height, world_landmarks):
+    """
+    Apply Stick Detection Method 4: Adaptive Stick Correction
+    
+    Corrects raw YOLO stick detection using body proportions from MediaPipe.
+    YOLO gets the DIRECTION right but LENGTH wrong. This method keeps the direction
+    and fixes the length using body landmarks.
+    
+    Args:
+        raw_grip_px: (x, y) in pixels - raw YOLO grip point
+        raw_tip_px: (x, y) in pixels - raw YOLO tip point
+        kpts: [33, 4] array - MediaPipe landmarks (x, y, z, visibility) in normalized coords
+        img_width: image width in pixels
+        img_height: image height in pixels
+        world_landmarks: MediaPipe world landmarks (3D in meters)
+    
+    Returns:
+        corrected_grip_px, corrected_tip_px: (x, y) tuples in pixels
+    """
+    STICK_LENGTH_M = 0.71  # Standard Arnis stick length in meters
+    FRONT_VIEW_THRESHOLD = 0.45
+    TORSO_MULTIPLIER = 1.5
+    
+    # Convert normalized landmarks to pixel coordinates
+    def to_pixels(lm):
+        return np.array([lm[0] * img_width, lm[1] * img_height])
+    
+    left_shoulder = to_pixels(kpts[11])
+    right_shoulder = to_pixels(kpts[12])
+    left_hip = to_pixels(kpts[23])
+    right_hip = to_pixels(kpts[24])
+    left_elbow = to_pixels(kpts[13])
+    right_elbow = to_pixels(kpts[14])
+    left_wrist = to_pixels(kpts[15])
+    right_wrist = to_pixels(kpts[16])
+    
+    # STEP 3: Determine Viewpoint (Front vs Side)
+    shoulder_width = calculate_distance(left_shoulder, right_shoulder)
+    left_torso_len = calculate_distance(left_shoulder, left_hip)
+    right_torso_len = calculate_distance(right_shoulder, right_hip)
+    avg_torso_px = (left_torso_len + right_torso_len) / 2
+    
+    view_ratio = shoulder_width / (avg_torso_px + 1e-6)
+    is_front_view = view_ratio > FRONT_VIEW_THRESHOLD
+    
+    # STEP 4: Calculate Corrected Stick Length
+    if is_front_view:
+        # Front view: Use torso scaling
+        stick_px = avg_torso_px * TORSO_MULTIPLIER
+    else:
+        # Side view: Use forearm scaling with 3D world landmarks
+        # Identify which arm holds the stick (closest wrist to grip)
+        dist_left = calculate_distance(left_wrist, raw_grip_px)
+        dist_right = calculate_distance(right_wrist, raw_grip_px)
+        
+        if dist_left < dist_right:
+            # Left arm holds stick
+            wrist_idx, elbow_idx = 15, 13
+        else:
+            # Right arm holds stick
+            wrist_idx, elbow_idx = 16, 14
+        
+        # Get 3D forearm length from world landmarks
+        wrist_3d = world_landmarks[wrist_idx]
+        elbow_3d = world_landmarks[elbow_idx]
+        forearm_m = np.sqrt(
+            (wrist_3d.x - elbow_3d.x)**2 + 
+            (wrist_3d.y - elbow_3d.y)**2 + 
+            (wrist_3d.z - elbow_3d.z)**2
+        )
+        
+        # Calculate scaling ratio
+        len_ratio = STICK_LENGTH_M / (forearm_m + 1e-6)
+        
+        # Get 2D forearm length in pixels
+        wrist_2d = to_pixels(kpts[wrist_idx])
+        elbow_2d = to_pixels(kpts[elbow_idx])
+        forearm_px = calculate_distance(wrist_2d, elbow_2d)
+        
+        # Final stick length in pixels
+        stick_px = forearm_px * len_ratio
+    
+    # STEP 5: Project Corrected Tip
+    # Get direction from raw YOLO (reliable)
+    direction = np.array([raw_tip_px[0] - raw_grip_px[0], raw_tip_px[1] - raw_grip_px[1]])
+    direction_len = np.linalg.norm(direction) + 1e-6
+    direction_normalized = direction / direction_len
+    
+    # Project new tip using corrected length
+    corrected_tip_px = (
+        raw_grip_px[0] + direction_normalized[0] * stick_px,
+        raw_grip_px[1] + direction_normalized[1] * stick_px
+    )
+    
+    # Grip stays at raw YOLO position (anchored to wrist, reliable)
+    return raw_grip_px, corrected_tip_px
 
 
 def extract_raw_features(image_path, stick_detector):
@@ -85,14 +184,31 @@ def extract_raw_features(image_path, stick_detector):
         kpts.append([lm.x, lm.y, lm.z, lm.visibility])
     kpts = np.array(kpts)
     
-    # Extract stick
+    # Extract stick with Method 4 correction
     stick_results = stick_detector(str(image_path), verbose=False)[0]
     if stick_results.keypoints is not None and len(stick_results.keypoints.data) > 0:
         stick_kpts = stick_results.keypoints.data[0].cpu().numpy()
-        # Add z=0 for stick (YOLO doesn't provide depth)
-        stick_grip = [stick_kpts[0, 0] / w, stick_kpts[0, 1] / h, 0.0, stick_kpts[0, 2]]
-        stick_tip = [stick_kpts[1, 0] / w, stick_kpts[1, 1] / h, 0.0, stick_kpts[1, 2]]
+        
+        # Get raw YOLO endpoints in pixels
+        raw_grip_px = (stick_kpts[0, 0], stick_kpts[0, 1])
+        raw_tip_px = (stick_kpts[1, 0], stick_kpts[1, 1])
+        
+        # Apply Method 4 correction using body proportions
+        try:
+            corrected_grip_px, corrected_tip_px = apply_stick_method4_correction(
+                raw_grip_px, raw_tip_px, kpts, w, h, results.pose_world_landmarks.landmark
+            )
+            
+            # Normalize corrected endpoints
+            stick_grip = [corrected_grip_px[0] / w, corrected_grip_px[1] / h, 0.0, stick_kpts[0, 2]]
+            stick_tip = [corrected_tip_px[0] / w, corrected_tip_px[1] / h, 0.0, stick_kpts[1, 2]]
+        except Exception as e:
+            # Fallback to raw YOLO if correction fails
+            print(f"Method 4 correction failed for {image_path}: {e}, using raw YOLO")
+            stick_grip = [stick_kpts[0, 0] / w, stick_kpts[0, 1] / h, 0.0, stick_kpts[0, 2]]
+            stick_tip = [stick_kpts[1, 0] / w, stick_kpts[1, 1] / h, 0.0, stick_kpts[1, 2]]
     else:
+        # No stick detected by YOLO
         stick_grip = [0.5, 0.5, 0.0, 0.0]
         stick_tip = [0.5, 0.5, 0.0, 0.0]
     

@@ -12,7 +12,7 @@ import sys
 
 # Add parent directory to path to import model
 sys.path.append(str(Path(__file__).parent.parent))
-from hybrid_classifier.5_analyze_hybrid_gcn import HybridGCN, load_hybrid_graph_data, MODELS_DIR, OUTPUT_DIR
+from hybrid_classifier import HybridGCN, load_hybrid_graph_data, MODELS_DIR, OUTPUT_DIR
 
 VIEWPOINTS = ['front', 'left', 'right']
 
