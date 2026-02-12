@@ -170,7 +170,7 @@ def compute_class_weights(train_graphs):
     return torch.FloatTensor(weights)
 
 
-def train_hybrid_gcn(viewpoint_filter=None, epochs=150, lr=0.001, hidden_dim=256, dropout=0.5, num_layers=3, augment=True):
+def train_hybrid_gcn(viewpoint_filter=None, epochs=150, lr=0.001, hidden_dim=128, dropout=0.5, num_layers=3, augment=True):
     """Train Hybrid GCN with node + global features"""
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
