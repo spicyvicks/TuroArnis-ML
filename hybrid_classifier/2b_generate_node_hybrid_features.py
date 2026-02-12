@@ -18,7 +18,7 @@ from functools import partial
 
 # Config
 FEATURE_TEMPLATES = "hybrid_classifier/feature_templates.json"
-DATASET_ROOT = Path("dataset_augmented")
+DATASET_ROOT = Path("dataset_split")
 OUTPUT_DIR = Path("hybrid_classifier/hybrid_features_v2")
 STICK_MODEL = "runs/pose/arnis_stick_detector/weights/best.pt"
 

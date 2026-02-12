@@ -46,25 +46,25 @@ def get_augmentation_pipeline(viewpoint):
         # 2. Scale/Zoom (0.8-1.2x) - Simulates distance variation
         A.RandomScale(scale_limit=0.2, p=0.6),
         
-        # 3. Random Occlusion - Improves robustness to partial visibility
-        A.CoarseDropout(
-            max_holes=3, 
-            max_height=50, 
-            max_width=50, 
-            min_holes=1,
-            min_height=20,
-            min_width=20,
-            p=0.4
-        ),
+        # 3. Random Occlusion - REMOVED (Can hide critical keypoints)
+        # A.CoarseDropout(
+        #     max_holes=3, 
+        #     max_height=50, 
+        #     max_width=50, 
+        #     min_holes=1,
+        #     min_height=20,
+        #     min_width=20,
+        #     p=0.4
+        # ),
         
         # 4. Perspective Transform - Simulates camera angle variation
         A.Perspective(scale=(0.02, 0.05), p=0.3),
     ]
     
-    # Only flip horizontally for front view (side views have distinct L/R meaning)
-    if viewpoint == 'front':
-        transforms.append(A.HorizontalFlip(p=0.5))
-        
+    # Horizontal Flip is REMOVED for front view because it swaps the arm usage
+    # (e.g. Right Knee Block uses Right Arm -> Flipped becomes Right Knee Block using Left Arm -> INVALID)
+    # Side views already excluded it, but front view must also exclude it.
+    
     return A.Compose(transforms)
 
 def augment_dataset():
