@@ -1,42 +1,20 @@
 """
-Step 0b: Organize Pre-Split Data and Verify Split Ratio
+Step 0: Verify Train/Test Split Ratio
 
-Use this when you already have data separated into train/test folders.
-This script will:
-1. Copy your pre-split data into the correct structure
-2. Verify the train/test split ratio for each class
-3. Report statistics
+Analyzes your existing dataset_split/ directory and reports:
+- Train/test split ratio for each class
+- Actionable advice on how many images to move to achieve 80/20 split
+- Overall dataset statistics
 
-Expected input structure (flexible):
-source_train/
-    ├── front/
-    │   ├── crown_thrust_correct/
-    │   └── ...
-    └── ...
-
-source_test/
-    └── ... (same structure)
-
-Output structure:
-dataset_split/
-    ├── train/
-    │   ├── front/
-    │   │   ├── crown_thrust_correct/
-    │   │   └── ...
-    │   ├── left/
-    │   └── right/
-    └── test/
-        └── ... (same structure)
+No copying - just verification and recommendations.
 """
 
-import shutil
 from pathlib import Path
 from collections import defaultdict
 
 # Configuration
-SOURCE_TRAIN = Path("dataset_split/train")  # UPDATE THIS
-SOURCE_TEST = Path("dataset_split/test")    # UPDATE THIS
-OUTPUT_DIR = Path("dataset_split_final")
+DATASET_DIR = Path("dataset_split")
+TARGET_RATIO = 0.80  # 80% train, 20% test
 
 CLASS_NAMES = [
     'crown_thrust_correct', 'left_chest_thrust_correct', 'left_elbow_block_correct',
@@ -57,50 +35,27 @@ def count_images(directory):
     return len(list(directory.glob("*.jpg")) + list(directory.glob("*.png")))
 
 
-def organize_data(source_dir, output_split_name):
-    """Copy data from source to output with correct structure"""
-    print(f"\n{'='*60}")
-    print(f"Organizing {output_split_name} data...")
-    print(f"{'='*60}")
-    
+def collect_stats(split_name):
+    """Collect image counts for a split (train or test)"""
     stats = defaultdict(lambda: defaultdict(int))
     
     for viewpoint in VIEWPOINTS:
-        viewpoint_src = source_dir / viewpoint
-        if not viewpoint_src.exists():
-            print(f"⚠️  Warning: {viewpoint_src} not found, skipping...")
-            continue
-        
         for class_name in CLASS_NAMES:
-            class_src = viewpoint_src / class_name
-            if not class_src.exists():
-                continue
-            
-            # Create destination directory
-            class_dst = OUTPUT_DIR / output_split_name / viewpoint / class_name
-            class_dst.mkdir(parents=True, exist_ok=True)
-            
-            # Copy images
-            images = list(class_src.glob("*.jpg")) + list(class_src.glob("*.png"))
-            for img in images:
-                shutil.copy2(img, class_dst / img.name)
-            
-            count = len(images)
+            class_dir = DATASET_DIR / split_name / viewpoint / class_name
+            count = count_images(class_dir)
             stats[viewpoint][class_name] = count
-            print(f"  ✓ {viewpoint}/{class_name}: {count} images")
     
     return stats
 
 
 def verify_split_ratio(train_stats, test_stats):
     """Verify and report train/test split ratios with actionable advice"""
-    print(f"\n{'='*80}")
-    print(f"{'SPLIT RATIO VERIFICATION':^80}")
-    print(f"{'='*80}\n")
+    print(f"\n{'='*88}")
+    print(f"{'SPLIT RATIO VERIFICATION':^88}")
+    print(f"{'='*88}\n")
     
     total_train = 0
     total_test = 0
-    target_ratio = 0.80
     
     # Header
     print(f"{'Viewpoint/Class':<35} {'Train':>6} {'Test':>6} {'Ratio':>8} {'Status':>4} {'Action Needed':<20}")
@@ -123,7 +78,7 @@ def verify_split_ratio(train_stats, test_stats):
             status = "✓" if 0.75 <= ratio <= 0.85 else "⚠️"
             
             # Calculate action needed
-            target_train = int(total * target_ratio)
+            target_train = int(total * TARGET_RATIO)
             diff = train_count - target_train
             
             if abs(diff) <= 1:
@@ -142,43 +97,44 @@ def verify_split_ratio(train_stats, test_stats):
     
     print(f"{'OVERALL':<35} {total_train:>6} {total_test:>6} {overall_ratio:>8.1%} {overall_status:>4}")
     
-    print(f"\n{'='*80}")
+    print(f"\n{'='*88}")
     if 0.75 <= overall_ratio <= 0.85:
         print("✅ Split ratio is within acceptable range (75-85% train)")
     else:
         print(f"⚠️  Split ratio ({overall_ratio:.1%}) is outside recommended range.")
         print("   Please follow the 'Action Needed' column to balance your dataset.")
-    print(f"{'='*80}\n")
+    print(f"{'='*88}\n")
 
 
 def main():
-    print(f"\n{'='*60}")
-    print("DATA ORGANIZATION AND SPLIT VERIFICATION")
-    print(f"{'='*60}")
+    print(f"\n{'='*88}")
+    print(f"{'DATASET SPLIT VERIFICATION':^88}")
+    print(f"{'='*88}")
+    print(f"Analyzing: {DATASET_DIR.absolute()}\n")
     
-    # Check source directories
-    if not SOURCE_TRAIN.exists():
-        print(f"❌ Error: Training data directory not found: {SOURCE_TRAIN}")
-        print("Please update SOURCE_TRAIN in the script.")
+    # Check if dataset directory exists
+    if not DATASET_DIR.exists():
+        print(f"❌ Error: Dataset directory not found: {DATASET_DIR}")
+        print("Please ensure your data is in dataset_split/train and dataset_split/test")
         return
     
-    if not SOURCE_TEST.exists():
-        print(f"❌ Error: Test data directory not found: {SOURCE_TEST}")
-        print("Please update SOURCE_TEST in the script.")
+    train_dir = DATASET_DIR / "train"
+    test_dir = DATASET_DIR / "test"
+    
+    if not train_dir.exists():
+        print(f"❌ Error: Training directory not found: {train_dir}")
         return
     
-    # Create output directory
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    if not test_dir.exists():
+        print(f"❌ Error: Test directory not found: {test_dir}")
+        return
     
-    # Organize data
-    train_stats = organize_data(SOURCE_TRAIN, "train")
-    test_stats = organize_data(SOURCE_TEST, "test")
+    # Collect statistics
+    train_stats = collect_stats("train")
+    test_stats = collect_stats("test")
     
     # Verify split ratio
     verify_split_ratio(train_stats, test_stats)
-    
-    print(f"\n✅ Data organized successfully!")
-    print(f"Output directory: {OUTPUT_DIR.absolute()}\n")
 
 
 if __name__ == "__main__":
