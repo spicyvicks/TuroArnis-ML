@@ -1,15 +1,17 @@
 """
-Step 0c: Augment Training Data
+Step 0c: Augment Training Data (Research-Backed Methods)
 
-Generates augmented copies of training images to increase dataset size.
-Applies:
-- Random horizontal flip (for front view only)
-- Random rotation (±10 degrees)
-- Color jitter (brightness/contrast)
-- Gaussian blur (robustness)
+Generates augmented copies of training images using research-backed augmentation
+strategies proven effective for pose estimation tasks:
+
+1. Rotation (±10°) - Standard in pose estimation literature
+2. Scale/Zoom (0.8-1.2x) - Simulates distance variation
+3. Random Occlusion (CoarseDropout) - Improves robustness to partial visibility
+4. Perspective Transform - Simulates camera angle variation
+5. Horizontal Flip (front view only) - Preserves left/right semantics
 
 Input: dataset_split/train
-Output: dataset_augmented/train
+Output: Augmented images saved in-place with _aug1, _aug2 suffixes
 """
 
 import cv2
@@ -36,12 +38,27 @@ CLASS_NAMES = [
 VIEWPOINTS = ['front', 'left', 'right']
 
 def get_augmentation_pipeline(viewpoint):
-    """Define augmentation pipeline based on viewpoint"""
+    """Define augmentation pipeline based on research-backed methods for pose estimation"""
     transforms = [
+        # 1. Rotation (±10°) - Standard in pose estimation
         A.Rotate(limit=10, p=0.7),
-        A.RandomBrightnessContrast(p=0.5),
-        A.GaussianBlur(blur_limit=(3, 5), p=0.3),
-        A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
+        
+        # 2. Scale/Zoom (0.8-1.2x) - Simulates distance variation
+        A.RandomScale(scale_limit=0.2, p=0.6),
+        
+        # 3. Random Occlusion - Improves robustness to partial visibility
+        A.CoarseDropout(
+            max_holes=3, 
+            max_height=50, 
+            max_width=50, 
+            min_holes=1,
+            min_height=20,
+            min_width=20,
+            p=0.4
+        ),
+        
+        # 4. Perspective Transform - Simulates camera angle variation
+        A.Perspective(scale=(0.02, 0.05), p=0.3),
     ]
     
     # Only flip horizontally for front view (side views have distinct L/R meaning)
