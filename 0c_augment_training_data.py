@@ -6,9 +6,13 @@ strategies proven effective for pose estimation tasks:
 
 1. Rotation (±10°) - Standard in pose estimation literature
 2. Scale/Zoom (0.8-1.2x) - Simulates distance variation
-3. Random Occlusion (CoarseDropout) - Improves robustness to partial visibility
-4. Perspective Transform - Simulates camera angle variation
-5. Horizontal Flip (front view only) - Preserves left/right semantics
+3. Perspective Transform - Simulates camera angle variation
+4. Horizontal Flip - ALWAYS applied to augmented images (100% flip rate)
+
+Data distribution per original image:
+- 1 original (non-flipped)
+- 2 augmented (ALWAYS flipped + other transforms)
+= 66% flipped data to match app's mirrored camera view
 
 Input: dataset_split/train
 Output: Augmented images saved in-place with _aug1, _aug2 suffixes
@@ -37,7 +41,7 @@ CLASS_NAMES = [
 
 VIEWPOINTS = ['front', 'left', 'right']
 
-def get_augmentation_pipeline(viewpoint):
+def get_augmentation_pipeline(viewpoint, always_flip=False):
     """Define augmentation pipeline based on research-backed methods for pose estimation"""
     transforms = [
         # 1. Rotation (±10°) - Standard in pose estimation
@@ -46,24 +50,14 @@ def get_augmentation_pipeline(viewpoint):
         # 2. Scale/Zoom (0.8-1.2x) - Simulates distance variation
         A.RandomScale(scale_limit=0.2, p=0.6),
         
-        # 3. Random Occlusion - REMOVED (Can hide critical keypoints)
-        # A.CoarseDropout(
-        #     max_holes=3, 
-        #     max_height=50, 
-        #     max_width=50, 
-        #     min_holes=1,
-        #     min_height=20,
-        #     min_width=20,
-        #     p=0.4
-        # ),
-        
-        # 4. Perspective Transform - Simulates camera angle variation
+        # 3. Perspective Transform - Simulates camera angle variation
         A.Perspective(scale=(0.02, 0.05), p=0.3),
+        
+        # 4. Horizontal Flip - Makes models mirror-invariant (solves camera mirroring issue)
+        # ALWAYS flip augmented images to match app's mirrored camera view
+        # The stick is always held in the right hand, labels stay the same
+        A.HorizontalFlip(p=1.0 if always_flip else 0.0),
     ]
-    
-    # Horizontal Flip is REMOVED for front view because it swaps the arm usage
-    # (e.g. Right Knee Block uses Right Arm -> Flipped becomes Right Knee Block using Left Arm -> INVALID)
-    # Side views already excluded it, but front view must also exclude it.
     
     return A.Compose(transforms)
 
@@ -83,7 +77,8 @@ def augment_dataset():
             continue
             
         print(f"\nProcessing {viewpoint} view...")
-        augmentor = get_augmentation_pipeline(viewpoint)
+        # Create augmentation pipeline that ALWAYS flips
+        augmentor = get_augmentation_pipeline(viewpoint, always_flip=True)
         
         for class_name in CLASS_NAMES:
             class_dir = viewpoint_dir / class_name
@@ -91,15 +86,17 @@ def augment_dataset():
                 continue
                 
             images = list(class_dir.glob("*.jpg")) + list(class_dir.glob("*.png"))
-            print(f"  - {class_name}: {len(images)} original images")
+            # Filter out previously augmented images (only process originals)
+            original_images = [img for img in images if '_aug' not in img.stem]
+            print(f"  - {class_name}: {len(original_images)} original images → {len(original_images) * (AUGMENT_FACTOR + 1)} total (1 original + {AUGMENT_FACTOR} flipped)")
             
-            for img_path in tqdm(images, desc=f"    Augmenting"):
+            for img_path in tqdm(original_images, desc=f"    Augmenting"):
                 try:
                     image = cv2.imread(str(img_path))
                     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                     
                     for i in range(AUGMENT_FACTOR):
-                        # Apply augmentation
+                        # Apply augmentation (with flip)
                         augmented = augmentor(image=image)['image']
                         
                         # Save augmented image
@@ -114,6 +111,8 @@ def augment_dataset():
 
     print(f"\n{'='*60}")
     print("✅ Augmentation Complete!")
+    print(f"Data Distribution: 1 original (non-flipped) + {AUGMENT_FACTOR} augmented (ALWAYS flipped)")
+    print(f"Flip Ratio: ~{int(AUGMENT_FACTOR/(AUGMENT_FACTOR+1)*100)}% flipped data")
     print(f"{'='*60}\n")
 
 if __name__ == "__main__":

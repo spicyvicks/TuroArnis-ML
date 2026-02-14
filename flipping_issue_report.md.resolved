@@ -1,0 +1,70 @@
+# Technical Report: Camera Mirroring (Flipping) Issue & Resolution
+
+## Problem Overview
+In the TuroArnis application, we encountered a critical conflict between **User Experience (UX)** and **Model Accuracy** regarding camera mirroring.
+
+### The Mirror Effect
+Standard cameras show a "true" view, but users generally find it difficult to practice physical forms (like Arnis) without a "selfie" or "mirrored" view. Mirrored view allows users to see their movements as if looking into a mirror.
+
+### The Conflict
+1.  **Training Data**: The GCN (Graph Convolutional Network) models were trained on datasets where the images were **not mirrored**.
+2.  **Viewpoint Confusion**: If a user performs a "Left Temple Block" in a mirrored view, the model sees a "Right" block unless corrected.
+3.  **Coordinate Mismatch**: Visual overlays (skeletons and stick drawings) must align with the video feed. If the model processes a non-mirrored frame while the UI displays a mirrored one, the coordinates will be inverted on the X-axis.
+
+---
+
+## Resolution: The "Double Flip" Strategy
+
+We implemented a robust mapping system in [app/app.py](file:///c:/Users/HP/Documents/GitHub/TuroArnis/app/app.py) within the [analyze_zones](file:///c:/Users/HP/Documents/GitHub/TuroArnis/app/app.py#947-1082) and [update_feed](file:///c:/Users/HP/Documents/GitHub/TuroArnis/app/app.py#1083-1338) methods.
+
+### 1. User Interface Mirroring
+In [update_feed](file:///c:/Users/HP/Documents/GitHub/TuroArnis/app/app.py#1083-1338), the live camera frame is flipped horizontally for the display:
+```python
+frame = cv2.flip(frame, 1) # Horizontal mirror for selfie view
+```
+
+### 2. Inference Orientation Correction
+Before sending a frame to the [PoseAnalyzer](file:///c:/Users/HP/Documents/GitHub/TuroArnis/app/computer_vision/pose_analyzer.py#21-814), we flip it **back** to the "original" orientation. This ensures the GCN sees the pose in the orientation it was trained for.
+```python
+zone_frame_for_inference = cv2.flip(zone_frame, 1)
+results = self.pose_analyzer.process_frame(zone_frame_for_inference, ...)
+```
+
+### 3. Viewpoint Remapping
+Since the user selection is based on their mirrored perspective, we map the viewpoint choices to the appropriate specialist models:
+*   **"Right Side"** (User faces right on screen) → Mapped to the **"Left"** model.
+*   **"Left Side"** (User faces left on screen) → Mapped to the **"Right"** model.
+*   **"Front"** → Unchanged.
+
+### 4. Coordinate Alignment
+Since MediaPipe/YOLO returns coordinates from the flipped inference frame, we transform them back to the UI coordinate system for accurate drawing:
+```python
+# Flip X-coordinate back for display
+flipped_x = zone_width - original_x
+```
+
+---
+
+## Future Improvements
+
+While the current solution is functional, we suggest several enhancements to improve performance and robustness:
+
+### 1. Automatic Viewpoint Detection
+Currently, users must manually select "Front", "Left", or "Right".
+*   **Suggestion**: Implement a pre-classifier or use shoulder-to-torso ratios (Z-depth) to automatically detect the user's viewpoint. This reduces setup time and user error.
+
+### 2. Mirror-Invariant Training (Data Augmentation)
+Instead of flipping frames at runtime:
+*   **Suggestion**: Retrain or fine-tune models using a dataset where **horizontal flipping** is part of the augmentation pipeline. This would allow the model to natively handle both mirrored and non-mirrored feeds with high confidence.
+
+### 3. Centralized Coordinate Manager
+Coordinates are currently flipped in multiple places in [app.py](file:///c:/Users/HP/Documents/GitHub/TuroArnis/app/app.py).
+*   **Suggestion**: Create a `CoordinateTransformer` class that handles all scaling, offset, and mirroring mappings between "Camera Space", "Inference Space", and "Screen Space".
+
+### 4. GPU-Accelerated Image Processing
+Flipping frames twice per cycle consumes CPU cycles.
+*   **Suggestion**: Offload image transformations (flip, resize) to the GPU using specialized libraries if the target hardware supports it (e.g., CUDA or OpenCL wrappers for OpenCV).
+
+---
+> [!NOTE]
+> This strategy was essential for ensuring that the Arnis stick was drawn in the correct hand and the feedback correctly identified left vs. right techniques.

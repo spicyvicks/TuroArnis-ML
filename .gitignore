@@ -1,6 +1,3 @@
-models/v018_ang3_rf/model_rf.joblib
-models/v022_ang4_split_rf/model_rf.joblib
-models/v020_ang4_rf/model_rf.joblib
 dataset/
 /dataset
 dataset_aug/
