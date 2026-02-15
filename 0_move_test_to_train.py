@@ -21,7 +21,6 @@ NUM_IMAGES_TO_COPY = 3  # Number of images to copy per class
 CLASS_NAMES = [
     'crown_thrust_correct', 'left_chest_thrust_correct', 'left_elbow_block_correct',
     'left_eye_thrust_correct', 'left_knee_block_correct', 'left_temple_block_correct',
-    'neutral_stance',
     'right_chest_thrust_correct', 'right_elbow_block_correct',
     'right_eye_thrust_correct', 'right_knee_block_correct', 'right_temple_block_correct',
     'solar_plexus_thrust_correct'

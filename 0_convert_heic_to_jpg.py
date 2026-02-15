@@ -20,7 +20,7 @@ from tqdm import tqdm
 register_heif_opener()
 
 # Configuration
-ROOT_DIR = Path("dataset_split")  # Check this directory recursively
+ROOT_DIR = Path("trio")  # Check this directory recursively
 DELETE_ORIGINALS = True  # Set to True to delete .heic files after conversion
 
 def convert_heic_to_jpg():

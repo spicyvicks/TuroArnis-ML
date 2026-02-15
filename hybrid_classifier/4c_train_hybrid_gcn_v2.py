@@ -18,14 +18,13 @@ from torch_geometric.nn import GCNConv, global_mean_pool
 CLASS_NAMES = [
     'crown_thrust_correct', 'left_chest_thrust_correct', 'left_elbow_block_correct',
     'left_eye_thrust_correct', 'left_knee_block_correct', 'left_temple_block_correct',
-    'neutral_stance',
     'right_chest_thrust_correct', 'right_elbow_block_correct',
     'right_eye_thrust_correct', 'right_knee_block_correct', 'right_temple_block_correct',
     'solar_plexus_thrust_correct'
 ]
 
 # Config
-HYBRID_FEATURES_DIR = Path("hybrid_classifier/hybrid_features_v2")
+HYBRID_FEATURES_DIR = Path("hybrid_classifier/hybrid_features_v3")
 OUTPUT_DIR = Path("hybrid_classifier/models")
 
 SKELETON_EDGES = [
@@ -205,7 +204,8 @@ def train_hybrid_gcn(viewpoint_filter=None, epochs=150, lr=0.001, hidden_dim=128
     class_weights = compute_class_weights(train_graphs).to(device)
     
     # Create dataloaders
-    train_loader = DataLoader(train_graphs, batch_size=32, shuffle=True)
+    # drop_last=True prevents BatchNorm error when last batch has only 1 sample
+    train_loader = DataLoader(train_graphs, batch_size=32, shuffle=True, drop_last=True)
     test_loader = DataLoader(test_graphs, batch_size=32, shuffle=False)
     
     # Initialize model

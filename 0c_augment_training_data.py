@@ -7,15 +7,16 @@ strategies proven effective for pose estimation tasks:
 1. Rotation (±10°) - Standard in pose estimation literature
 2. Scale/Zoom (0.8-1.2x) - Simulates distance variation
 3. Perspective Transform - Simulates camera angle variation
-4. Horizontal Flip - ALWAYS applied to augmented images (100% flip rate)
+4. Horizontal Flip - Applied to half of augmented images
 
 Data distribution per original image:
 - 1 original (non-flipped)
-- 2 augmented (ALWAYS flipped + other transforms)
-= 66% flipped data to match app's mirrored camera view
+- 1 augmented (non-flipped, aug1)
+- 2 augmented (ALWAYS flipped, aug2-3)
+= 50% flipped data (2/4)
 
 Input: dataset_split/train
-Output: Augmented images saved in-place with _aug1, _aug2 suffixes
+Output: Augmented images saved in-place with _aug1, _aug2, _aug3 suffixes
 """
 
 import cv2
@@ -28,12 +29,11 @@ import albumentations as A
 # Configuration
 INPUT_DIR = Path("dataset_split/train")
 OUTPUT_DIR = Path("dataset_split/train")  # Augment IN-PLACE (or change to dataset_augmented)
-AUGMENT_FACTOR = 2  # Number of augmented copies per image
+AUGMENT_FACTOR = 3  # Number of augmented copies per image (1 non-flipped + 2 flipped)
 
 CLASS_NAMES = [
     'crown_thrust_correct', 'left_chest_thrust_correct', 'left_elbow_block_correct',
     'left_eye_thrust_correct', 'left_knee_block_correct', 'left_temple_block_correct',
-    'neutral_stance',
     'right_chest_thrust_correct', 'right_elbow_block_correct',
     'right_eye_thrust_correct', 'right_knee_block_correct', 'right_temple_block_correct',
     'solar_plexus_thrust_correct'
@@ -77,8 +77,9 @@ def augment_dataset():
             continue
             
         print(f"\nProcessing {viewpoint} view...")
-        # Create augmentation pipeline that ALWAYS flips
-        augmentor = get_augmentation_pipeline(viewpoint, always_flip=True)
+        # Create both augmentation pipelines
+        augmentor_no_flip = get_augmentation_pipeline(viewpoint, always_flip=False)
+        augmentor_with_flip = get_augmentation_pipeline(viewpoint, always_flip=True)
         
         for class_name in CLASS_NAMES:
             class_dir = viewpoint_dir / class_name
@@ -88,7 +89,7 @@ def augment_dataset():
             images = list(class_dir.glob("*.jpg")) + list(class_dir.glob("*.png"))
             # Filter out previously augmented images (only process originals)
             original_images = [img for img in images if '_aug' not in img.stem]
-            print(f"  - {class_name}: {len(original_images)} original images → {len(original_images) * (AUGMENT_FACTOR + 1)} total (1 original + {AUGMENT_FACTOR} flipped)")
+            print(f"  - {class_name}: {len(original_images)} original → {len(original_images) * (AUGMENT_FACTOR + 1)} total (1 original + 1 aug no-flip + 2 aug flipped)")
             
             for img_path in tqdm(original_images, desc=f"    Augmenting"):
                 try:
@@ -96,8 +97,12 @@ def augment_dataset():
                     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                     
                     for i in range(AUGMENT_FACTOR):
-                        # Apply augmentation (with flip)
-                        augmented = augmentor(image=image)['image']
+                        # aug1 (i=0): No flip, just other augmentations
+                        # aug2-4 (i=1,2,3): Always flip + other augmentations
+                        if i == 0:
+                            augmented = augmentor_no_flip(image=image)['image']
+                        else:
+                            augmented = augmentor_with_flip(image=image)['image']
                         
                         # Save augmented image
                         aug_img = cv2.cvtColor(augmented, cv2.COLOR_RGB2BGR)
@@ -111,8 +116,11 @@ def augment_dataset():
 
     print(f"\n{'='*60}")
     print("✅ Augmentation Complete!")
-    print(f"Data Distribution: 1 original (non-flipped) + {AUGMENT_FACTOR} augmented (ALWAYS flipped)")
-    print(f"Flip Ratio: ~{int(AUGMENT_FACTOR/(AUGMENT_FACTOR+1)*100)}% flipped data")
+    print(f"Data Distribution per original image:")
+    print(f"  - 1 original (non-flipped)")
+    print(f"  - 1 augmented (non-flipped, aug1)")
+    print(f"  - 2 augmented (flipped, aug2-3)")
+    print(f"Flip Ratio: 50% flipped data (2/4)")
     print(f"{'='*60}\n")
 
 if __name__ == "__main__":
