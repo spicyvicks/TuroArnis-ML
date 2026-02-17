@@ -1,106 +1,96 @@
-STICK DETECTION METHOD 4 - Adaptive Stick Correction
-=====================================================
-Used in: app/computer_vision/pose_analyzer.py (lines ~405-493)
+STICK DETECTION: VIEWPOINT-SPECIFIC HANDLING GUIDE
 
-PURPOSE
--------
-Corrects the raw YOLO stick detection (grip + tip keypoints) using body 
-proportions from MediaPipe. Raw YOLO often gets the stick LENGTH wrong 
-(too short or too long) but gets the DIRECTION right. This method keeps 
-YOLO's direction and fixes the length using body landmarks.
+OVERVIEW:
+The system uses a custom-trained YOLOv8 model (deployment_package/weights/best.pt) that detects two keypoints on the Arnis stick: "grip" (held by hand) and "tip" (far end). However, raw YOLO predictions vary significantly based on camera viewpoint due to perspective distortion and foreshortening. We implement viewpoint-adaptive corrections to ensure consistent stick length and direction across all angles.
 
-
-WHY IT'S BETTER THAN RAW YOLO
-------------------------------
-1. Raw YOLO stick tip position is noisy and inconsistent frame-to-frame.
-2. Raw YOLO doesn't know real-world stick length (0.71m standard Arnis stick).
-3. Method 4 anchors stick length to body proportions, which are stable.
-4. Adapts to camera viewpoint (front vs side) automatically.
-
-
-THE ALGORITHM (5 STEPS)
-------------------------
-
-STEP 1: Get Raw YOLO Endpoints
-  - Run custom YOLO stick detector on frame
-  - Get grip_pt (x,y) and tip_pt (x,y)
-  - These give us the DIRECTION of the stick (reliable)
-  - But the LENGTH may be wrong
-
-STEP 2: Get MediaPipe Body Landmarks
-  - Need: Left/Right Shoulder (11,12), Left/Right Hip (23,24),
-          Left/Right Elbow (13,14), Left/Right Wrist (15,16)
-  - Convert from normalized coords to absolute pixel coords
-
-STEP 3: Determine Viewpoint (Front vs Side)
-  - Calculate: shoulder_width = distance(left_shoulder, right_shoulder)
-  - Calculate: avg_torso_px = average(left_torso_length, right_torso_length)
-    where torso_length = distance(shoulder, hip) on each side
-  - Calculate: view_ratio = shoulder_width / avg_torso_px
-  - If view_ratio > 0.45 → FRONT VIEW (shoulders appear wide)
-  - If view_ratio <= 0.45 → SIDE VIEW (shoulders appear narrow)
-
-STEP 4: Calculate Corrected Stick Length (in pixels)
+STEP 1: VIEWPOINT DETECTION
+The system first determines if the camera is FRONT or SIDE view using one of two methods:
   
-  IF FRONT VIEW:
-    - Use Torso Scaling
-    - stick_px = avg_torso_px * 1.5
-    - Why: Real stick (0.71m) is ~1.42x average torso (0.5m). 
-      Using 1.5 for slight overestimate/visibility.
-    - Why torso not forearm: In front view, the forearm foreshortens 
-      (appears shorter than reality), but torso height stays stable.
+  Method A - GCN Viewpoint (Preferred):
+  - If GCN inference is active, use the current_viewpoint setting ('front', 'left', or 'right')
+  - 'front' = FRONT view, 'left'/'right' = SIDE view
+  
+  Method B - Automatic Detection (Fallback):
+  - Calculate shoulder_width = distance between LEFT_SHOULDER and RIGHT_SHOULDER landmarks
+  - Calculate avg_torso_length = average of (LEFT_SHOULDER to LEFT_HIP) and (RIGHT_SHOULDER to RIGHT_HIP)
+  - Compute view_ratio = shoulder_width / avg_torso_length
+  - If view_ratio > 0.45 → FRONT view (shoulders appear wide relative to torso)
+  - If view_ratio ≤ 0.45 → SIDE view (shoulders appear narrow/overlapped)
 
-  IF SIDE VIEW:
-    - Use Forearm Scaling with 3D world landmarks
-    - Identify which arm holds the stick (closest wrist to grip point)
-    - Get 3D forearm length from MediaPipe world landmarks:
-        forearm_m = distance_3d(wrist_3d, elbow_3d)
-    - Calculate scaling ratio:
-        len_ratio = stick_length_meters(0.71) / forearm_m
-    - Get 2D forearm length in pixels:
-        forearm_px = distance_2d(wrist_2d, elbow_2d)
-    - Final: stick_px = forearm_px * len_ratio
-    - Why forearm not torso: In side view, the torso foreshortens, 
-      but the arm holding the stick is visible and accurate.
+STEP 2: GRIP-TIP SWAP VALIDATION
+YOLO sometimes confuses which keypoint is grip vs tip. Before processing:
+  
+  - Measure distance from each keypoint to both wrists
+  - The grip MUST be closer to a wrist than the tip
+  - If tip is actually closer to wrist → swap the keypoints
+  - Example: If tip is 45px from wrist and grip is 180px → swap them
 
-STEP 5: Project Corrected Tip
-  - Get direction from raw YOLO: direction = normalize(tip - grip)
-  - Project new tip: corrected_tip = grip + (direction * stick_px)
-  - Final output: (grip_pt, corrected_tip)
-  - Grip stays at raw YOLO position (anchored to wrist, reliable)
-  - Only the tip is corrected
+STEP 3A: FRONT VIEW CORRECTION
+Problem: When camera faces the practitioner, the stick appears foreshortened (compressed in depth). YOLO's detected tip is unreliable because the 71cm stick may only appear 60-80px long in the image.
 
+Solutions Applied:
+  1. GRIP ANCHOR:
+     - Discard YOLO's grip location
+     - Anchor grip to the MediaPipe WRIST landmark (RIGHT_WRIST or LEFT_WRIST, whichever is closer)
+     - Why: MediaPipe's wrist tracking is more stable than YOLO's grip detection
+  
+  2. LENGTH CALCULATION:
+     - Calculate stick_length_px = 1.5 × avg_torso_length_px
+     - Why: A 71cm stick is roughly 1.5× the torso length (shoulder to hip) for most practitioners
+     - Example: If torso = 120px → stick = 180px
+  
+  3. DIRECTION CALCULATION (BLENDED):
+     - Get YOLO_direction = vector from grip to tip (normalized)
+     - Get hand_direction = vector from WRIST to THUMB landmark (normalized)
+     - Compute blended_direction = (0.4 × YOLO_direction) + (0.6 × hand_direction)
+     - Normalize the blended vector
+     - Why: In front view, the hand/thumb orientation is more reliable than YOLO's foreshortened tip
+  
+  4. FINAL TIP POSITION:
+     - new_tip = grip_anchor + (blended_direction × stick_length_px)
+     - Return corrected stick_endpoints = (grip_anchor, new_tip)
 
-INPUTS NEEDED
---------------
-- Raw YOLO stick detection: grip_pt, tip_pt (pixel coordinates)
-- MediaPipe 2D landmarks: shoulders, hips, elbows, wrists (normalized)
-- MediaPipe 3D world landmarks: wrists, elbows (meters, for side view only)
-- Image dimensions: to convert normalized → pixel coordinates
+STEP 3B: SIDE VIEW CORRECTION  
+Problem: From side angles, YOLO detects direction accurately, but length can be distorted by arm position and camera distance. The stick may appear longer or shorter than its true 71cm length.
 
+Solutions Applied:
+  1. GRIP ANCHOR:
+     - Same as front view: anchor to MediaPipe WRIST landmark
+  
+  2. LENGTH CALCULATION (3D WORLD-BASED):
+     - Get 3D world coordinates from MediaPipe:
+       - wrist_3d = world coordinate of active wrist (x, y, z in meters)
+       - elbow_3d = world coordinate of active elbow
+     - Calculate forearm_length_meters = distance(wrist_3d, elbow_3d)
+     - Known: standard Arnis stick = 0.71 meters
+     - Compute length_ratio = 0.71 / forearm_length_meters
+     - Calculate forearm_length_px = distance(wrist_2d, elbow_2d) in image pixels
+     - Final stick_length_px = forearm_length_px × length_ratio
+     - Example: If forearm = 0.30m (world) and 90px (image), then stick = 90px × (0.71/0.30) = 213px
+  
+  3. CLAMP OUTLIERS:
+     - Calculate max_allowed = 2.5 × avg_torso_length_px
+     - If stick_length_px > max_allowed → clamp to max_allowed
+     - Why: Prevents extreme cases where pose estimation errors cause 500px+ sticks
+  
+  4. DIRECTION CALCULATION:
+     - Use YOLO's detected direction directly: direction = (tip - grip) / ||tip - grip||
+     - Why: Side view has minimal foreshortening; YOLO's tip is reliable
+  
+  5. FINAL TIP POSITION:
+     - new_tip = grip_anchor + (direction × stick_length_px)
+     - Return corrected stick_endpoints = (grip_anchor, new_tip)
 
-CONSTANTS
----------
-- Stick length: 0.71 meters (standard Arnis stick)
-- Front/Side threshold: view_ratio > 0.45
-- Torso multiplier: 1.5 (for front view)
+STEP 4: OUTPUT
+The corrected stick_endpoints tuple (grip_xy, tip_xy) is stored in the result dictionary and used for:
+  - Visual overlay rendering (draw_stick_debug)
+  - Grip angle calculation (angle between stick vector and arm vector)
+  - Form validation in FeedbackAnalyzer
 
-
-FALLBACK
---------
-If correction fails (missing landmarks, math error), use raw YOLO endpoints.
-
-
-HOW TO USE THIS FOR GCN TRAINING
-----------------------------------
-When generating features for GCN training (e.g., 2b_generate_node_hybrid_features.py):
-
-1. Detect stick with YOLO → get raw grip and tip
-2. Run MediaPipe on same image → get body landmarks  
-3. Apply Method 4 correction to get corrected tip
-4. Normalize corrected endpoints: 
-     grip_normalized = (grip_x / img_width, grip_y / img_height)
-     tip_normalized  = (corrected_tip_x / img_width, corrected_tip_y / img_height)
-5. Use these as stick keypoints (nodes 33, 34) for the GCN graph
-
-This ensures the GCN training data matches what the app produces at runtime.
+WHY THIS MATTERS:
+Accurate stick detection is critical because:
+  - Grip angle is a key feature for GCN classification (distinguishes thrusts from blocks)
+  - Visual feedback helps practitioners see if they're holding the stick correctly
+  - Incorrect length/direction would cause false feedback ("adjust your grip") when form is actually correct
+  
+The viewpoint-adaptive approach ensures that whether the user films from front, left, or right, the system provides consistent and accurate stick tracking for reliable form assessment.
