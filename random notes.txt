@@ -12,3 +12,13 @@ Online features - Cloud sync, instructor dashboards, leaderboards
 •	To develop a system that can recognize individuals and analyze their body movements, achieving accuracy in understanding their posture and positioning.
 •	To build a smart "TuroAnis" model that can correctly identify fundamental Arnis strikes and blocks with accuracy.
 •	To demonstrate that beginners who use TuroArnis with its live feedback feature show a clear improvement in their Arnis stances when compared to learning without the app's guidance.
+
+
+
+
+Known Issue: Hardcoded Template Reference in Hybrid Feature Inference
+
+During live inference, the hybrid feature vector (30 values) fed into the GCN model is computed by comparing the user's pose geometry against the crown_thrust_correct expert template — regardless of what pose is actually being performed. This is caused by a hardcoded CLASS_NAMES[0] in 
+app/computer_vision/gcn_inference.py
+ (line 115), which was left as a placeholder. During training, each sample's hybrid features were correctly computed against its own class template (e.g., a Leg Block image was compared to the Leg Block template), producing high similarity scores for correct poses. At inference time, this mismatch means all non-Crown-Thrust poses receive artificially low similarity scores, which conflicts with what the model learned during training and likely reduces classification confidence for those classes. To fix: either retrain the model using raw geometric features (angles, distances) instead of Gaussian similarity scores in the hybrid feature vector — removing the template dependency entirely — or restructure inference to run all 12 templates and select the best-matching one before passing to the model.
+
