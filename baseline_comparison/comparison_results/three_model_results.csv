@@ -1,0 +1,10 @@
+Model,Viewpoint,Best Accuracy (%),Final Accuracy (%),Macro F1
+Pose Transformer,Front,23.91,23.91,0.154
+Pose Transformer,Left,28.97,28.97,0.2243
+Pose Transformer,Right,45.74,45.74,0.4133
+ST-GCN,Front,35.33,35.33,0.3045
+ST-GCN,Left,24.14,24.14,0.1492
+ST-GCN,Right,36.43,36.43,0.3259
+Pure GCN,Front,66.3,66.3,0.6547
+Pure GCN,Left,58.62,58.62,0.5651
+Pure GCN,Right,57.36,57.36,0.5649
