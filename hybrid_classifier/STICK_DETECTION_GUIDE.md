@@ -13,7 +13,7 @@ Use this to update `apply_stick_method4_correction()` in `2b_generate_node_hybri
 | **Side length** | Forearm 3D ratio | Shin-based: `shin_px × (0.71 / shin_m)` |
 | **Front anchor** | Raw YOLO grip | MediaPipe RIGHT pinky |
 | **Side anchor** | Raw YOLO grip | Raw YOLO grip (unchanged) |
-| **Grip/tip swap** | Always (all views) | Front view only |
+| **Grip/tip swap** | Always (all views) | Disabled (all views) |
 | **Direction** | Pure YOLO (all views) | Pure YOLO (all views, unchanged) |
 
 ---
@@ -31,7 +31,7 @@ def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img
     - Length: shin-based (knee→ankle 3D ratio) for ALL viewpoints
     - Front anchor: MediaPipe RIGHT pinky (index 18) instead of raw YOLO grip
     - Side anchor: raw YOLO grip (unchanged)
-    - Grip/tip swap: front view only (side views trust YOLO assignment)
+    - Grip/tip swap: Disabled for all viewpoints (trusts YOLO)
 
     Args:
         raw_grip_px: (x, y) in pixels - raw YOLO grip point
@@ -70,20 +70,20 @@ def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img
         view_ratio    = shoulder_width / (avg_torso_px + 1e-6)
         is_front_view = view_ratio > FRONT_VIEW_THRESHOLD
 
-    # --- STEP 2: Grip/tip swap (front view only) ---
-    # In side view, one hand is occluded → MediaPipe wrist distances unreliable → skip swap
+    # --- STEP 2: Grip/tip swap (disabled) ---
     grip_px = np.array(raw_grip_px, dtype=float)
     tip_px  = np.array(raw_tip_px,  dtype=float)
 
-    if is_front_view:
-        dist_grip_r = np.linalg.norm(grip_px - right_wrist)
-        dist_grip_l = np.linalg.norm(grip_px - left_wrist)
-        dist_tip_r  = np.linalg.norm(tip_px  - right_wrist)
-        dist_tip_l  = np.linalg.norm(tip_px  - left_wrist)
-        min_grip_dist = min(dist_grip_r, dist_grip_l)
-        min_tip_dist  = min(dist_tip_r,  dist_tip_l)
-        if min_tip_dist < min_grip_dist:
-            grip_px, tip_px = tip_px, grip_px  # swap
+    # Step 2 disabled: Trusts YOLO assignment for all viewpoints
+    # if is_front_view:
+    #     dist_grip_r = np.linalg.norm(grip_px - right_wrist)
+    #     dist_grip_l = np.linalg.norm(grip_px - left_wrist)
+    #     dist_tip_r  = np.linalg.norm(tip_px  - right_wrist)
+    #     dist_tip_l  = np.linalg.norm(tip_px  - left_wrist)
+    #     min_grip_dist = min(dist_grip_r, dist_grip_l)
+    #     min_tip_dist  = min(dist_tip_r,  dist_tip_l)
+    #     if min_tip_dist < min_grip_dist:
+    #         grip_px, tip_px = tip_px, grip_px  # swap
 
     # --- STEP 3: Set grip anchor ---
     if is_front_view:
@@ -182,4 +182,4 @@ Apply the same changes as above.
 | Shin-based length | Shin length is consistent across poses; torso compresses in bent poses, forearm varies with arm position |
 | Front pinky anchor | Raw YOLO grip from front is noisy (foreshortening); pinky is anatomically where the grip is |
 | Side YOLO anchor | MediaPipe left/right hand assignment fails when one hand is occluded in profile view |
-| Front-only swap | Same reason — MediaPipe wrist distances unreliable in side view |
+| Full YOLO trust | MediaPipe wrist distances unreliable in side view and sometimes noisy in front |
