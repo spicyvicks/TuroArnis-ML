@@ -1,0 +1,91 @@
+{
+  "train_accuracy": 0.9772344013490725,
+  "test_accuracy": 0.5103448275862069,
+  "classification_report": {
+    "crown_thrust_correct": {
+      "precision": 0.6923076923076923,
+      "recall": 0.6923076923076923,
+      "f1-score": 0.6923076923076923,
+      "support": 13.0
+    },
+    "left_chest_thrust_correct": {
+      "precision": 0.14285714285714285,
+      "recall": 0.18181818181818182,
+      "f1-score": 0.16,
+      "support": 11.0
+    },
+    "left_elbow_block_correct": {
+      "precision": 0.35714285714285715,
+      "recall": 0.5555555555555556,
+      "f1-score": 0.43478260869565216,
+      "support": 9.0
+    },
+    "left_eye_thrust_correct": {
+      "precision": 0.5714285714285714,
+      "recall": 0.6666666666666666,
+      "f1-score": 0.6153846153846154,
+      "support": 12.0
+    },
+    "left_knee_block_correct": {
+      "precision": 1.0,
+      "recall": 0.8461538461538461,
+      "f1-score": 0.9166666666666666,
+      "support": 13.0
+    },
+    "left_temple_block_correct": {
+      "precision": 0.2,
+      "recall": 0.13333333333333333,
+      "f1-score": 0.16,
+      "support": 15.0
+    },
+    "right_chest_thrust_correct": {
+      "precision": 0.3,
+      "recall": 0.2727272727272727,
+      "f1-score": 0.2857142857142857,
+      "support": 11.0
+    },
+    "right_elbow_block_correct": {
+      "precision": 0.21428571428571427,
+      "recall": 0.21428571428571427,
+      "f1-score": 0.21428571428571427,
+      "support": 14.0
+    },
+    "right_eye_thrust_correct": {
+      "precision": 0.6666666666666666,
+      "recall": 0.7692307692307693,
+      "f1-score": 0.7142857142857143,
+      "support": 13.0
+    },
+    "right_knee_block_correct": {
+      "precision": 0.8888888888888888,
+      "recall": 0.7272727272727273,
+      "f1-score": 0.8,
+      "support": 11.0
+    },
+    "right_temple_block_correct": {
+      "precision": 0.2857142857142857,
+      "recall": 0.16666666666666666,
+      "f1-score": 0.21052631578947367,
+      "support": 12.0
+    },
+    "solar_plexus_thrust_correct": {
+      "precision": 0.7857142857142857,
+      "recall": 1.0,
+      "f1-score": 0.88,
+      "support": 11.0
+    },
+    "accuracy": 0.5103448275862069,
+    "macro avg": {
+      "precision": 0.5087505087505088,
+      "recall": 0.5188348688348688,
+      "f1-score": 0.5069961344274845,
+      "support": 145.0
+    },
+    "weighted avg": {
+      "precision": 0.5066119321291734,
+      "recall": 0.5103448275862069,
+      "f1-score": 0.5021325017075036,
+      "support": 145.0
+    }
+  }
+}

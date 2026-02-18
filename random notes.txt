@@ -9,6 +9,10 @@ Multi-camera support - 3D pose reconstruction for better depth analysis
 Target detection - Verify strikes hit specific targets
 Online features - Cloud sync, instructor dashboards, leaderboards
 
-•	To develop a system that can recognize individuals and analyze their body movements, achieving accuracy in understanding their posture and positioning.
-•	To build a smart "TuroAnis" model that can correctly identify fundamental Arnis strikes and blocks with accuracy.
+•	•	To develop a system that can recognize individuals and analyze their Arnis stances, achieving accuracy in understanding their posture and positioning.
+•	To build a smart "TuroAnis" model that can correctly classify static, fundamental Arnis strikes and blocks with accuracy.
 •	To demonstrate that beginners who use TuroArnis with its live feedback feature show a clear improvement in their Arnis stances when compared to learning without the app's guidance.
+
+XGBoost (Traditional ML Baseline): It answers the question: "Do we even need Deep Learning?" If a traditional gradient-boosted tree performs just as well as a GCN, then the complexity of a neural network isn't justified.
+Pure MLP (Deep Learning / Spatial Baseline): It answers the question: "Does the Graph structure actually matter?" Since the MLP sees the same raw coordinates as the GCN but lacks the "edges" (anatomical connections), it proves whether modeling human anatomy explicitly helps the AI understand the pose better.
+CapsNet (Architectural Alternative): While technically more advanced than a simple baseline, it serves as a "state-of-the-art" competitor. It tests if "Routing-by-Agreement" is better at handling different camera viewpoints than your GCN approach.

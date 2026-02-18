@@ -1,0 +1,14 @@
+no automatic angle detection yet
+
+Auto-viewpoint detection - CNN to classify camera angle automatically
+Temporal models (LSTM) - Track movement sequences, not just poses
+Audio feedback - Voice coaching prompts
+Video recording - Save sessions with overlay annotations
+Mobile app - TensorFlow Lite deployment for phone/tablet use
+Multi-camera support - 3D pose reconstruction for better depth analysis
+Target detection - Verify strikes hit specific targets
+Online features - Cloud sync, instructor dashboards, leaderboards
+
+•	To develop a system that can recognize individuals and analyze their body movements, achieving accuracy in understanding their posture and positioning.
+•	To build a smart "TuroAnis" model that can correctly identify fundamental Arnis strikes and blocks with accuracy.
+•	To demonstrate that beginners who use TuroArnis with its live feedback feature show a clear improvement in their Arnis stances when compared to learning without the app's guidance.
