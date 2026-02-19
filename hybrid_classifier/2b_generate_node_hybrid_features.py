@@ -91,6 +91,10 @@ def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img
     right_hip      = to_pixels(kpts[24])
     left_wrist     = to_pixels(kpts[15])
     right_wrist    = to_pixels(kpts[16])
+    
+    # Calculate average torso pixel length for sanity check clamping
+    avg_torso_px = (np.linalg.norm(left_shoulder - left_hip) +
+                    np.linalg.norm(right_shoulder - right_hip)) / 2.0
 
     # --- UNIFIED LOGIC: Hand Proximity & Pinky Snap ---
     
