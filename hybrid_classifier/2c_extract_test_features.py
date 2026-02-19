@@ -17,8 +17,8 @@ from functools import partial
 
 # Config
 FEATURE_TEMPLATES = "hybrid_classifier/feature_templates.json"
-DATASET_ROOT = Path("dataset_augmented")
-OUTPUT_DIR = Path("hybrid_classifier/hybrid_features_v2")
+DATASET_ROOT = Path("dataset_split")
+OUTPUT_DIR = Path("hybrid_classifier/hybrid_features_v3")
 STICK_MODEL = "runs/pose/arnis_stick_detector/weights/best.pt"
 
 CLASS_NAMES = [
@@ -26,7 +26,8 @@ CLASS_NAMES = [
     'left_eye_thrust_correct', 'left_knee_block_correct', 'left_temple_block_correct',
     'right_chest_thrust_correct', 'right_elbow_block_correct',
     'right_eye_thrust_correct', 'right_knee_block_correct', 'right_temple_block_correct',
-    'solar_plexus_thrust_correct'
+    'solar_plexus_thrust_correct',
+    'neutral'
 ]
 
 # Skeleton edges
@@ -90,42 +91,39 @@ def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img
     left_wrist     = to_pixels(kpts[15])
     right_wrist    = to_pixels(kpts[16])
 
-    # --- STEP 1: Determine viewpoint (front vs side) ---
-    shoulder_width = np.linalg.norm(left_shoulder - right_shoulder)
-    avg_torso_px   = (np.linalg.norm(left_shoulder - left_hip) +
-                      np.linalg.norm(right_shoulder - right_hip)) / 2.0
-
-    if viewpoint is not None:
-        is_front_view = (viewpoint == 'front')
-    else:
-        view_ratio    = shoulder_width / (avg_torso_px + 1e-6)
-        is_front_view = view_ratio > FRONT_VIEW_THRESHOLD
-
-    # --- STEP 2: Grip/tip swap (disabled) ---
+    # --- UNIFIED LOGIC: Hand Proximity & Pinky Snap ---
+    
+    # 0. Foreshortening Check (New from App)
+    # If raw YOLO stick is very short (pointing at camera), skip correction to avoid wild snaps
     grip_px = np.array(raw_grip_px, dtype=float)
     tip_px  = np.array(raw_tip_px,  dtype=float)
+    
+    raw_length = np.linalg.norm(tip_px - grip_px)
+    FORESHORTEN_THRESHOLD_PX = 40
+    
+    if raw_length < FORESHORTEN_THRESHOLD_PX:
+        # Stick is foreshortened (end-on view) -> Trust raw YOLO, skip correction
+        # This prevents the stick from "snapping" to a full length when it should look short
+        return tuple(grip_px), tuple(tip_px)
 
-    # Step 2 disabled: Trusts YOLO assignment for all viewpoints
-    # if is_front_view:
-    #     dist_grip_r = np.linalg.norm(grip_px - right_wrist)
-    #     dist_grip_l = np.linalg.norm(grip_px - left_wrist)
-    #     dist_tip_r  = np.linalg.norm(tip_px  - right_wrist)
-    #     dist_tip_l  = np.linalg.norm(tip_px  - left_wrist)
-    #     min_grip_dist = min(dist_grip_r, dist_grip_l)
-    #     min_tip_dist  = min(dist_tip_r,  dist_tip_l)
-    #     if min_tip_dist < min_grip_dist:
-    #         grip_px, tip_px = tip_px, grip_px  # swap
-
-    # --- STEP 3: Set grip anchor ---
-    if is_front_view:
-        # Front view: use MediaPipe RIGHT pinky (index 18) as grip anchor
-        # More anatomically accurate than raw YOLO grip from front
-        right_pinky = to_pixels(kpts[18])
-        grip_px = right_pinky
-    # Side view: keep raw YOLO grip (already set above)
-
-    # --- STEP 4: Shin-based stick length (both viewpoints) ---
-    # Shin (knee→ankle) is more stable than torso or forearm across poses
+    # 1. Identify Hand: Compare YOLO grip distance to Left vs Right Wrist
+    dist_r = np.linalg.norm(grip_px - right_wrist)
+    dist_l = np.linalg.norm(grip_px - left_wrist)
+    
+    hand_label = "RIGHT" if dist_r < dist_l else "LEFT"
+    
+    # 2. Snap Anchor: Use MediaPipe Pinky of the identified hand
+    # This is anatomically stable and robust against occlusion
+    if hand_label == "RIGHT":
+        pinky_idx = 18 # RIGHT_PINKY
+    else:
+        pinky_idx = 17 # LEFT_PINKY
+        
+    anchor_px = to_pixels(kpts[pinky_idx])
+    grip_px = anchor_px # Update grip to snapped anchor
+    
+    # --- STEP 4: Shin-based stick length (unified for all views) ---
+    # Shin (knee→ankle) is more stable than torso or forearm
     lk = to_pixels(kpts[25]);  la = to_pixels(kpts[27])   # left knee, left ankle
     rk = to_pixels(kpts[26]);  ra = to_pixels(kpts[28])   # right knee, right ankle
 
@@ -146,7 +144,8 @@ def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img
     # Clamp to 2.5× torso (sanity check)
     stick_px = min(stick_px, avg_torso_px * 2.5)
 
-    # --- STEP 5: Project corrected tip using YOLO direction ---
+    # --- STEP 5: Project corrected tip using pure YOLO direction ---
+    # Direction is always derived from raw YOLO grip->tip vector
     direction = tip_px - grip_px
     direction_len = np.linalg.norm(direction) + 1e-6
     direction_unit = direction / direction_len

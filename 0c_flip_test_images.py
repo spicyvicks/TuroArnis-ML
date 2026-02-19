@@ -22,7 +22,8 @@ CLASS_NAMES = [
     'left_eye_thrust_correct', 'left_knee_block_correct', 'left_temple_block_correct',
     'right_chest_thrust_correct', 'right_elbow_block_correct',
     'right_eye_thrust_correct', 'right_knee_block_correct', 'right_temple_block_correct',
-    'solar_plexus_thrust_correct'
+    'solar_plexus_thrust_correct',
+    'neutral'
 ]
 
 VIEWPOINTS = ['front', 'left', 'right']
@@ -77,13 +78,29 @@ def flip_test_images():
     print(f"{'='*60}\n")
 
 if __name__ == "__main__":
+    import argparse
     import sys
     
     # Safety confirmation
-    print("\n⚠️  WARNING: This will OVERWRITE all test images with horizontally flipped versions")
+    print("\n⚠️  WARNING: This will OVERWRITE test images with horizontally flipped versions")
     print(f"📁 Directory: {TEST_DIR.absolute()}")
     print("\nThis is recommended because the app ALWAYS sends mirrored frames to the model.")
     print("Test accuracy will then reflect real-world deployment performance.")
+    
+    parser = argparse.ArgumentParser(description="Flip test images horizontally")
+    parser.add_argument("--target_class", type=str, default=None,
+                        help=f"Flip ONLY this specific class (e.g., 'neutral'). Available: {', '.join(CLASS_NAMES)}")
+    
+    args = parser.parse_args()
+
+    if args.target_class:
+        if args.target_class not in CLASS_NAMES:
+            print(f"❌ Error: '{args.target_class}' is not a valid class name.")
+            print(f"Valid classes: {CLASS_NAMES}")
+            sys.exit(1)
+        print(f"🎯 Target Class Set: '{args.target_class}' (Other classes will be skipped)")
+        # Filter CLASS_NAMES to only the target
+        CLASS_NAMES = [args.target_class]
     
     response = input("\nProceed? (yes/no): ").strip().lower()
     

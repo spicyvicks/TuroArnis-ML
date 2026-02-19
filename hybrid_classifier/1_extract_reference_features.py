@@ -21,7 +21,8 @@ CLASS_NAMES = [
     'left_eye_thrust_correct', 'left_knee_block_correct', 'left_temple_block_correct',
     'right_chest_thrust_correct', 'right_elbow_block_correct',
     'right_eye_thrust_correct', 'right_knee_block_correct', 'right_temple_block_correct',
-    'solar_plexus_thrust_correct'
+    'solar_plexus_thrust_correct',
+    'neutral'
 ]
 
 VIEWPOINTS = ['front', 'left', 'right']
@@ -47,102 +48,88 @@ def calculate_distance(p1, p2):
     return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
 
-def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img_height, world_landmarks):
+def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img_height, world_landmarks, viewpoint=None):
     """
-    Apply Stick Detection Method 4: Adaptive Stick Correction
-    
-    Corrects raw YOLO stick detection using body proportions from MediaPipe.
-    YOLO gets the DIRECTION right but LENGTH wrong. This method keeps the direction
-    and fixes the length using body landmarks.
-    
-    Args:
-        raw_grip_px: (x, y) in pixels - raw YOLO grip point
-        raw_tip_px: (x, y) in pixels - raw YOLO tip point
-        kpts: [33, 4] array - MediaPipe landmarks (x, y, z, visibility) in normalized coords
-        img_width: image width in pixels
-        img_height: image height in pixels
-        world_landmarks: MediaPipe world landmarks (3D in meters)
-    
-    Returns:
-        corrected_grip_px, corrected_tip_px: (x, y) tuples in pixels
+    Apply Stick Detection Method 4 (Updated): Adaptive Stick Correction
+    - Length: shin-based (knee→ankle 3D ratio) for ALL viewpoints
+    - Anchor: UNIFIED MediaPipe Pinky (Left/Right based on proximity)
+    - Safety: Foreshortening check (skips correction if stick < 40px)
     """
-    STICK_LENGTH_M = 0.71  # Standard Arnis stick length in meters
-    FRONT_VIEW_THRESHOLD = 0.45
-    TORSO_MULTIPLIER = 1.5
+    STICK_LENGTH_M = 0.71   # Standard Arnis stick length in meters
     
-    # Convert normalized landmarks to pixel coordinates
     def to_pixels(lm):
         return np.array([lm[0] * img_width, lm[1] * img_height])
+
+    # Body landmarks needed for calculation
+    left_wrist     = to_pixels(kpts[15])
+    right_wrist    = to_pixels(kpts[16])
     
-    left_shoulder = to_pixels(kpts[11])
+    # Calculate average torso pixel length for sanity check clamping
+    left_shoulder  = to_pixels(kpts[11])
     right_shoulder = to_pixels(kpts[12])
-    left_hip = to_pixels(kpts[23])
-    right_hip = to_pixels(kpts[24])
-    left_elbow = to_pixels(kpts[13])
-    right_elbow = to_pixels(kpts[14])
-    left_wrist = to_pixels(kpts[15])
-    right_wrist = to_pixels(kpts[16])
+    left_hip       = to_pixels(kpts[23])
+    right_hip      = to_pixels(kpts[24])
     
-    # STEP 3: Determine Viewpoint (Front vs Side)
-    shoulder_width = calculate_distance(left_shoulder, right_shoulder)
-    left_torso_len = calculate_distance(left_shoulder, left_hip)
-    right_torso_len = calculate_distance(right_shoulder, right_hip)
-    avg_torso_px = (left_torso_len + right_torso_len) / 2
+    avg_torso_px = (np.linalg.norm(left_shoulder - left_hip) +
+                    np.linalg.norm(right_shoulder - right_hip)) / 2.0
+
+    # --- UNIFIED LOGIC: Hand Proximity & Pinky Snap ---
     
-    view_ratio = shoulder_width / (avg_torso_px + 1e-6)
-    is_front_view = view_ratio > FRONT_VIEW_THRESHOLD
+    # 0. Foreshortening Check (New from App)
+    grip_px = np.array(raw_grip_px, dtype=float)
+    tip_px  = np.array(raw_tip_px,  dtype=float)
     
-    # STEP 4: Calculate Corrected Stick Length
-    if is_front_view:
-        # Front view: Use torso scaling
-        stick_px = avg_torso_px * TORSO_MULTIPLIER
+    raw_length = np.linalg.norm(tip_px - grip_px)
+    FORESHORTEN_THRESHOLD_PX = 40
+    
+    if raw_length < FORESHORTEN_THRESHOLD_PX:
+        # Stick is foreshortened (end-on view) -> Trust raw YOLO, skip correction
+        return tuple(grip_px), tuple(tip_px)
+
+    # 1. Identify Hand: Compare YOLO grip distance to Left vs Right Wrist
+    dist_r = np.linalg.norm(grip_px - right_wrist)
+    dist_l = np.linalg.norm(grip_px - left_wrist)
+    
+    hand_label = "RIGHT" if dist_r < dist_l else "LEFT"
+    
+    # 2. Snap Anchor: Use MediaPipe Pinky of the identified hand
+    if hand_label == "RIGHT":
+        pinky_idx = 18 # RIGHT_PINKY
     else:
-        # Side view: Use forearm scaling with 3D world landmarks
-        # Identify which arm holds the stick (closest wrist to grip)
-        dist_left = calculate_distance(left_wrist, raw_grip_px)
-        dist_right = calculate_distance(right_wrist, raw_grip_px)
+        pinky_idx = 17 # LEFT_PINKY
         
-        if dist_left < dist_right:
-            # Left arm holds stick
-            wrist_idx, elbow_idx = 15, 13
-        else:
-            # Right arm holds stick
-            wrist_idx, elbow_idx = 16, 14
-        
-        # Get 3D forearm length from world landmarks
-        wrist_3d = world_landmarks[wrist_idx]
-        elbow_3d = world_landmarks[elbow_idx]
-        forearm_m = np.sqrt(
-            (wrist_3d.x - elbow_3d.x)**2 + 
-            (wrist_3d.y - elbow_3d.y)**2 + 
-            (wrist_3d.z - elbow_3d.z)**2
-        )
-        
-        # Calculate scaling ratio
-        len_ratio = STICK_LENGTH_M / (forearm_m + 1e-6)
-        
-        # Get 2D forearm length in pixels
-        wrist_2d = to_pixels(kpts[wrist_idx])
-        elbow_2d = to_pixels(kpts[elbow_idx])
-        forearm_px = calculate_distance(wrist_2d, elbow_2d)
-        
-        # Final stick length in pixels
-        stick_px = forearm_px * len_ratio
+    anchor_px = to_pixels(kpts[pinky_idx])
+    grip_px = anchor_px # Update grip to snapped anchor
     
-    # STEP 5: Project Corrected Tip
-    # Get direction from raw YOLO (reliable)
-    direction = np.array([raw_tip_px[0] - raw_grip_px[0], raw_tip_px[1] - raw_grip_px[1]])
+    # --- STEP 4: Shin-based stick length (unified for all views) ---
+    lk = to_pixels(kpts[25]);  la = to_pixels(kpts[27])
+    rk = to_pixels(kpts[26]);  ra = to_pixels(kpts[28])
+
+    # 3D shin length (meters)
+    def world_pt(idx):
+        lm = world_landmarks[idx]
+        return np.array([lm.x, lm.y, lm.z])
+
+    shin_m = (np.linalg.norm(world_pt(25) - world_pt(27)) +
+              np.linalg.norm(world_pt(26) - world_pt(28))) / 2.0
+
+    # 2D shin length (pixels)
+    shin_px = (np.linalg.norm(lk - la) + np.linalg.norm(rk - ra)) / 2.0
+
+    # Stick length in pixels via ratio
+    stick_px = shin_px * (STICK_LENGTH_M / (shin_m + 1e-6))
+
+    # Clamp to 2.5× torso (sanity check)
+    stick_px = min(stick_px, avg_torso_px * 2.5)
+
+    # --- STEP 5: Project corrected tip using pure YOLO direction ---
+    direction = tip_px - grip_px
     direction_len = np.linalg.norm(direction) + 1e-6
-    direction_normalized = direction / direction_len
-    
-    # Project new tip using corrected length
-    corrected_tip_px = (
-        raw_grip_px[0] + direction_normalized[0] * stick_px,
-        raw_grip_px[1] + direction_normalized[1] * stick_px
-    )
-    
-    # Grip stays at raw YOLO position (anchored to wrist, reliable)
-    return raw_grip_px, corrected_tip_px
+    direction_unit = direction / direction_len
+
+    corrected_tip_px = grip_px + direction_unit * stick_px
+
+    return tuple(grip_px), tuple(corrected_tip_px)
 
 
 def extract_geometric_features(image_path):

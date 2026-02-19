@@ -93,6 +93,21 @@ def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img
         grip_px = right_pinky
     # Side view: keep raw YOLO grip (already set above)
 
+    # --- UNIFIED LOGIC: Hand Proximity & Pinky Snap ---
+    
+    # 0. Foreshortening Check (New from App)
+    # If raw YOLO stick is very short (pointing at camera), skip correction to avoid wild snaps
+    grip_px = np.array(raw_grip_px, dtype=float)
+    tip_px  = np.array(raw_tip_px,  dtype=float)
+
+    raw_length = np.linalg.norm(tip_px - grip_px)
+    FORESHORTEN_THRESHOLD_PX = 40
+    
+    if raw_length < FORESHORTEN_THRESHOLD_PX:
+        return tuple(grip_px), tuple(tip_px)
+
+    # 1. Identify Hand: Compare YOLO grip distance to Left vs Right Wristabove)
+
     # --- STEP 4: Shin-based stick length (both viewpoints) ---
     # Shin (knee→ankle) is more stable than torso or forearm across poses
     lk = to_pixels(kpts[25]);  la = to_pixels(kpts[27])   # left knee, left ankle
@@ -180,6 +195,8 @@ Apply the same changes as above.
 | Change | Reason |
 |---|---|
 | Shin-based length | Shin length is consistent across poses; torso compresses in bent poses, forearm varies with arm position |
-| Front pinky anchor | Raw YOLO grip from front is noisy (foreshortening); pinky is anatomically where the grip is |
-| Side YOLO anchor | MediaPipe left/right hand assignment fails when one hand is occluded in profile view |
-| Full YOLO trust | MediaPipe wrist distances unreliable in side view and sometimes noisy in front |
+| Front anchor | UNIFIED: MediaPipe Pinky (LEFT or RIGHT) based on YOLO proximity |
+| Side anchor | UNIFIED: MediaPipe Pinky (LEFT or RIGHT) based on YOLO proximity |
+| Grip/tip swap | Disabled (all views) |
+| Direction | Pure YOLO (all views, unchanged) |
+| **Foreshortening** | **Safety Check**: If raw YOLO stick length < 40px (pointing at camera), correction is SKIPPED to prevent wild snapping. |
