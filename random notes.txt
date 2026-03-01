@@ -22,3 +22,41 @@ During live inference, the hybrid feature vector (30 values) fed into the GCN mo
 app/computer_vision/gcn_inference.py
  (line 115), which was left as a placeholder. During training, each sample's hybrid features were correctly computed against its own class template (e.g., a Leg Block image was compared to the Leg Block template), producing high similarity scores for correct poses. At inference time, this mismatch means all non-Crown-Thrust poses receive artificially low similarity scores, which conflicts with what the model learned during training and likely reduces classification confidence for those classes. To fix: either retrain the model using raw geometric features (angles, distances) instead of Gaussian similarity scores in the hybrid feature vector — removing the template dependency entirely — or restructure inference to run all 12 templates and select the best-matching one before passing to the model.
 
+
+
+Since the study is intended for instructional purposes, the system must function not only as a detection tool but as an intelligent teaching assistant. The application should provide real-time corrective feedback, explicitly indicating:
+
+Which strike/block is incorrectly executed
+Which body segment (arm angle, wrist alignment, stance, foot placement) is incorrect
+What specific adjustment must be made
+Vague feedback such as “Incorrect form” is not sufficient for pedagogical validity.
+
+The Lesson Module must comprehensively cover the 12 Basic Strikes and Blocks, each including:
+High-resolution annotated images
+Step-by-step technical description
+Embedded demonstration video
+Key biomechanical checkpoints used by the model
+Ensure all materials are validated by a certified Arnis coach.
+
+The Practice Module must be divided into:
+Guided Mode (Training Mode) – Provides real-time visual overlays, angle corrections, and reference comparison (static form + validated video).
+Unguided Mode (Evaluation Mode) – Disables assistance and objectively scores performance for assessment purposes.
+Clearly justify how these two modes simulate authentic skills acquisition and evaluation environments.
+The claim that the system improves player performance must be empirically supported. Specifically:
+What scoring metric was used? (Angle deviation? Pose similarity index? Composite technical score?)
+Was a pre-test and post-test experimental design implemented?
+What statistical test was applied (e.g., paired t-test, Wilcoxon signed-rank test)?
+Was the improvement statistically significant (p-value reported)?
+Improvement must be quantitatively demonstrated, not assumed.
+Post-deployment validation is required:
+Did a certified Arnis coach evaluate the system’s detection accuracy?
+How many participants were assessed?
+What inter-rater reliability exists between the system and the coach?
+Clarify the coach’s scoring methodology:
+Was a standardized rubric used (e.g., stance – 25%, strike angle – 25%, timing – 25%, control – 25%)?
+Was the rubric validated?
+Compute correlation (e.g., Pearson r) between the system-generated score and the coach’s rubric score.
+Report agreement metrics (e.g., Cohen’s Kappa if categorical, ICC if continuous).
+If discrepancies exist between the system and expert evaluation, explain:
+Where the model fails
+Limitations in 2D pose estimation versus real-world 3D motion
