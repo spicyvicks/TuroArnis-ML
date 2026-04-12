@@ -6,13 +6,16 @@ Each pose is reconstructed from the mean joint heights and angles stored
 in the template (forward-kinematics style).
 
 Usage:
-    python visualize_reference_poses.py            # front view (default)
-    python visualize_reference_poses.py left       # left view
-    python visualize_reference_poses.py right      # right view
-    python visualize_reference_poses.py all        # all 3 viewpoints
+    python visualize_reference_poses.py                  # front view (default)
+    python visualize_reference_poses.py left             # left view
+    python visualize_reference_poses.py right            # right view
+    python visualize_reference_poses.py all              # all 3 viewpoints
+    python visualize_reference_poses.py --mirrored       # front view, mirrored templates
+    python visualize_reference_poses.py all --mirrored   # all views, mirrored templates
 
 Output:
-    reference_poses_<viewpoint>.png  saved in this directory
+    reference_poses_<viewpoint>.png           (normal templates)
+    reference_poses_<viewpoint>_mirrored.png  (mirrored templates, with --mirrored)
 """
 
 import json
@@ -22,10 +25,14 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from pathlib import Path
 
-# ── Path to the template file (relative from ML repo to app repo) ────────────
+# ── Path to template files ───────────────────────────────────────────────────
 TEMPLATE_PATH = (
     Path(__file__).parent.parent
     / "TuroArnis" / "app" / "models" / "gcn" / "feature_templates.json"
+)
+TEMPLATE_PATH_MIRRORED = (
+    Path(__file__).parent
+    / "hybrid_classifier" / "feature_templates_mirrored.json"
 )
 
 # ── Drawing constants ────────────────────────────────────────────────────────
@@ -159,7 +166,7 @@ def draw(ax, pts, title=""):
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
-def render(viewpoint: str, templates: dict):
+def render(viewpoint: str, templates: dict, mirrored: bool = False):
     vp = viewpoint.lower()
     items = {k: v for k, v in templates.items() if k.startswith(vp + "_")}
 
@@ -201,33 +208,46 @@ def render(viewpoint: str, templates: dict):
                facecolor="#1a1a2e", edgecolor="none",
                labelcolor="white", fontsize=9, bbox_to_anchor=(0.5, -0.02))
 
+    mirror_label = " [MIRRORED]" if mirrored else ""
     fig.suptitle(
-        f"Reference Poses — {vp.title()} View  ({n} techniques)",
+        f"Reference Poses{mirror_label} — {vp.title()} View  ({n} techniques)",
         color="white", fontsize=13, fontweight="bold",
     )
     plt.tight_layout(rect=[0, 0.04, 1, 0.97])
 
-    out = Path(__file__).parent / f"reference_poses_{vp}.png"
+    suffix = "_mirrored" if mirrored else ""
+    out = Path(__file__).parent / f"reference_poses_{vp}{suffix}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
     print(f"[✓] Saved → {out}")
     plt.show()
 
 
 def main():
-    if not TEMPLATE_PATH.exists():
-        print(f"[!] Template file not found:\n    {TEMPLATE_PATH}")
-        print("    Adjust TEMPLATE_PATH at the top of the script.")
-        sys.exit(1)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = {a for a in sys.argv[1:] if a.startswith("--")}
+    use_mirrored = "--mirrored" in flags
 
-    with open(TEMPLATE_PATH, encoding="utf-8") as f:
+    if use_mirrored:
+        path = TEMPLATE_PATH_MIRRORED
+        if not path.exists():
+            print(f"[!] Mirrored template file not found:\n    {path}")
+            print("    Run: python hybrid_classifier/1_extract_reference_features.py --mirrored")
+            sys.exit(1)
+    else:
+        path = TEMPLATE_PATH
+        if not path.exists():
+            print(f"[!] Template file not found:\n    {path}")
+            sys.exit(1)
+
+    with open(path, encoding="utf-8") as f:
         templates = json.load(f)
 
-    viewpoints = sys.argv[1:] if len(sys.argv) > 1 else ["front"]
+    viewpoints = args if args else ["front"]
     if viewpoints == ["all"]:
         viewpoints = ["front", "left", "right"]
 
     for vp in viewpoints:
-        render(vp, templates)
+        render(vp, templates, mirrored=use_mirrored)
 
 
 if __name__ == "__main__":

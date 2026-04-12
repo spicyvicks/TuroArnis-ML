@@ -15,6 +15,16 @@ from tqdm import tqdm
 REFERENCE_DIR = Path("reference_poses")
 STICK_MODEL = "runs/pose/arnis_stick_detector/weights/best.pt"
 OUTPUT_FILE = "hybrid_classifier/feature_templates.json"
+OUTPUT_FILE_MIRRORED = "hybrid_classifier/feature_templates_mirrored.json"
+
+# Features whose sign flips under a horizontal (left-right) mirror
+HORIZONTAL_FEATURES = {
+    'left_wrist_x', 'right_wrist_x',
+    'stick_tip_x', 'stick_grip_x',
+    'tip_side', 'grip_side',
+    'stick_dx', 'stick_angle',
+    'foot_stagger',
+}
 
 CLASS_NAMES = [
     'crown_thrust_correct', 'left_chest_thrust_correct', 'left_elbow_block_correct',
@@ -46,6 +56,16 @@ def calculate_angle(p1, p2, p3):
 def calculate_distance(p1, p2):
     """Euclidean distance between two points"""
     return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
+
+
+def mirror_features(features):
+    """Negate horizontal features to simulate a horizontally-flipped image.
+    Use this to align a mirrored pose against non-mirrored reference templates."""
+    mirrored = dict(features)
+    for feat in HORIZONTAL_FEATURES:
+        if feat in mirrored:
+            mirrored[feat] = -mirrored[feat]
+    return mirrored
 
 
 def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img_height, world_landmarks, viewpoint=None):
@@ -132,8 +152,10 @@ def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img
     return tuple(grip_px), tuple(corrected_tip_px)
 
 
-def extract_geometric_features(image_path):
-    """Extract all geometric features from a single image"""
+def extract_geometric_features(image_path, apply_mirror=False):
+    """Extract all geometric features from a single image.
+    If apply_mirror=True, negate horizontal features (simulates a flipped image).
+    """
     img = cv2.imread(str(image_path))
     if img is None:
         return None
@@ -240,14 +262,21 @@ def extract_geometric_features(image_path):
     # Distances
     features['hands_distance'] = calculate_distance(kpts[15], kpts[16])
     features['stick_length'] = calculate_distance(stick_grip, stick_tip)
-    
+
+    # Apply horizontal mirror correction if requested
+    if apply_mirror:
+        features = mirror_features(features)
+
     return features
 
 
-def analyze_reference_images(viewpoint_filter=None):
-    """Analyze all reference images and compute feature statistics"""
+def analyze_reference_images(viewpoint_filter=None, apply_mirror=False):
+    """Analyze all reference images and compute feature statistics.
+    If apply_mirror=True, negate horizontal features on all images (simulates
+    a horizontally-flipped camera) and saves to feature_templates_mirrored.json.
+    """
     templates = {}
-    
+
     viewpoints = [viewpoint_filter] if viewpoint_filter else VIEWPOINTS
     
     for viewpoint in viewpoints:
@@ -268,7 +297,7 @@ def analyze_reference_images(viewpoint_filter=None):
             
             all_features = []
             for img_path in tqdm(images, desc=f"{viewpoint}/{class_name}", leave=False):
-                features = extract_geometric_features(img_path)
+                features = extract_geometric_features(img_path, apply_mirror=apply_mirror)
                 if features:
                     all_features.append(features)
             
@@ -293,11 +322,13 @@ def analyze_reference_images(viewpoint_filter=None):
             templates[key] = feature_stats
     
     # Save templates
-    Path(OUTPUT_FILE).parent.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT_FILE, 'w') as f:
+    output_path = OUTPUT_FILE_MIRRORED if apply_mirror else OUTPUT_FILE
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, 'w') as f:
         json.dump(templates, f, indent=2)
-    
-    print(f"\n✓ Feature templates saved to {OUTPUT_FILE}")
+
+    label = "[MIRRORED] " if apply_mirror else ""
+    print(f"\n✓ {label}Feature templates saved to {output_path}")
     print(f"  Total templates: {len(templates)}")
 
 
@@ -308,6 +339,9 @@ if __name__ == "__main__":
     parser.add_argument('--viewpoint', type=str, default=None,
                         choices=['front', 'left', 'right'],
                         help='Process only specific viewpoint (default: all)')
+    parser.add_argument('--mirrored', action='store_true',
+                        help='Negate horizontal features (simulate a mirrored camera). '
+                             'Saves to feature_templates_mirrored.json instead.')
     args = parser.parse_args()
-    
-    analyze_reference_images(args.viewpoint)
+
+    analyze_reference_images(args.viewpoint, apply_mirror=args.mirrored)

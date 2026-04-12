@@ -171,6 +171,11 @@ def extract_raw_features(image_path, stick_detector, viewpoint=None):
     if img is None:
         return None
     
+    # Flip horizontally to simulate live app's mirrored camera output.
+    # Training data uses augmentation (which includes flips) to cover both orientations,
+    # but the test set should exactly match what the model sees at runtime.
+    img = cv2.flip(img, 1)
+    
     h, w = img.shape[:2]
     
     # Extract body pose

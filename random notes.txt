@@ -43,12 +43,14 @@ Guided Mode (Training Mode) – Provides real-time visual overlays, angle correc
 Unguided Mode (Evaluation Mode) – Disables assistance and objectively scores performance for assessment purposes.
 Clearly justify how these two modes simulate authentic skills acquisition and evaluation environments.
 The claim that the system improves player performance must be empirically supported. Specifically:
+
 What scoring metric was used? (Angle deviation? Pose similarity index? Composite technical score?)
 Was a pre-test and post-test experimental design implemented?
 What statistical test was applied (e.g., paired t-test, Wilcoxon signed-rank test)?
 Was the improvement statistically significant (p-value reported)?
 Improvement must be quantitatively demonstrated, not assumed.
 Post-deployment validation is required:
+
 Did a certified Arnis coach evaluate the system’s detection accuracy?
 How many participants were assessed?
 What inter-rater reliability exists between the system and the coach?
