@@ -31,8 +31,8 @@ CLASS_NAMES = [
     'left_eye_thrust_correct', 'left_knee_block_correct', 'left_temple_block_correct',
     'right_chest_thrust_correct', 'right_elbow_block_correct',
     'right_eye_thrust_correct', 'right_knee_block_correct', 'right_temple_block_correct',
-    'solar_plexus_thrust_correct',
-    'neutral'
+    'solar_plexus_thrust_correct'
+    # Note: 'neutral' removed to match TuroArnis app (12 classes)
 ]
 
 VIEWPOINTS = ['front', 'left', 'right']
@@ -44,9 +44,22 @@ stick_detector = YOLO(STICK_MODEL)
 
 
 def calculate_angle(p1, p2, p3):
-    """Calculate angle at p2 formed by p1-p2-p3"""
-    v1 = np.array([p1[0] - p2[0], p1[1] - p2[1]])
-    v2 = np.array([p3[0] - p2[0], p3[1] - p2[1]])
+    """
+    Calculate 3D angle at p2 formed by p1-p2-p3.
+    Uses 3D coordinates to distinguish thrusts (forward in Z) from blocks (sideways).
+    Matches TuroArnis app implementation.
+    """
+    # Handle 2D input for backward compatibility
+    if len(p1) == 2:
+        p1 = [p1[0], p1[1], 0.0]
+    if len(p2) == 2:
+        p2 = [p2[0], p2[1], 0.0]
+    if len(p3) == 2:
+        p3 = [p3[0], p3[1], 0.0]
+    
+    # 3D vector construction
+    v1 = np.array([p1[0] - p2[0], p1[1] - p2[1], p1[2] - p2[2]])
+    v2 = np.array([p3[0] - p2[0], p3[1] - p2[1], p3[2] - p2[2]])
     
     cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-6)
     angle = np.arccos(np.clip(cos_angle, -1.0, 1.0))
@@ -66,6 +79,50 @@ def mirror_features(features):
         if feat in mirrored:
             mirrored[feat] = -mirrored[feat]
     return mirrored
+
+
+def validate_features(features, pose_landmarks, stick_detected, stick_confidence=1.0):
+    """
+    Validate extracted features before including in template statistics.
+    Returns (is_valid: bool, reason: str)
+    
+    Issue #2: Quality validation gates to prevent corrupted templates.
+    """
+    # Rule 1: MediaPipe critical joint visibility check
+    CRITICAL_JOINTS = [11, 12, 13, 14, 15, 16, 23, 24]  # Shoulders, elbows, wrists, hips
+    MIN_VISIBILITY = 0.5
+    
+    for joint_idx in CRITICAL_JOINTS:
+        if pose_landmarks.landmark[joint_idx].visibility < MIN_VISIBILITY:
+            return False, f"Low visibility on joint {joint_idx} (< {MIN_VISIBILITY})"
+    
+    # Rule 2: YOLO stick detection check
+    if not stick_detected:
+        return False, "Stick not detected by YOLO"
+    
+    # Rule 3: YOLO confidence check
+    MIN_STICK_CONFIDENCE = 0.3
+    if stick_confidence < MIN_STICK_CONFIDENCE:
+        return False, f"Low stick confidence ({stick_confidence:.2f} < {MIN_STICK_CONFIDENCE})"
+    
+    # Rule 4: Physical plausibility - reject zero or impossible stick length
+    if features.get('stick_length', 0) == 0 or np.isnan(features.get('stick_length', 0)):
+        return False, "Zero or NaN stick length"
+    
+    # Rule 5: Sanity check on angles (reject impossible values)
+    ANGLE_FEATURES = [
+        'left_elbow_angle', 'right_elbow_angle',
+        'left_shoulder_angle', 'right_shoulder_angle',
+        'left_knee_angle', 'right_knee_angle'
+    ]
+    
+    for angle_name in ANGLE_FEATURES:
+        angle_val = features.get(angle_name, 0)
+        # Human joints can't be < 0 or > 180 (fully bent/extended)
+        if angle_val < 0 or angle_val > 180 or np.isnan(angle_val):
+            return False, f"Impossible {angle_name}: {angle_val:.1f}°"
+    
+    return True, "Valid"
 
 
 def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img_height, world_landmarks, viewpoint=None):
@@ -195,19 +252,47 @@ def extract_geometric_features(image_path, apply_mirror=False):
             stick_grip = [stick_kpts[0, 0] / w, stick_kpts[0, 1] / h]
             stick_tip = [stick_kpts[1, 0] / w, stick_kpts[1, 1] / h]
     else:
-        stick_grip = [0.5, 0.5]
-        stick_tip = [0.5, 0.5]
+        # Issue #5: Use NaN sentinel instead of [0.5, 0.5] fallback
+        # This allows validation gate to properly reject failed detections
+        stick_grip = [float('nan'), float('nan')]
+        stick_tip = [float('nan'), float('nan')]
+        stick_confidence = 0.0
     
     # Compute features
     features = {}
     
-    # Joint angles
-    features['left_elbow_angle'] = calculate_angle(kpts[11], kpts[13], kpts[15])
-    features['right_elbow_angle'] = calculate_angle(kpts[12], kpts[14], kpts[16])
-    features['left_shoulder_angle'] = calculate_angle(kpts[13], kpts[11], kpts[23])
-    features['right_shoulder_angle'] = calculate_angle(kpts[14], kpts[12], kpts[24])
-    features['left_knee_angle'] = calculate_angle(kpts[23], kpts[25], kpts[27])
-    features['right_knee_angle'] = calculate_angle(kpts[24], kpts[26], kpts[28])
+    # Issue #4: Use 3D world landmarks for angle calculation
+    # This distinguishes thrusts (forward in Z) from blocks (sideways in XY)
+    world_landmarks = results.pose_world_landmarks.landmark if results.pose_world_landmarks else None
+    
+    def get_world_point(idx):
+        """Get 3D world coordinate for landmark (meters)."""
+        if world_landmarks is None:
+            # Fallback to 2D with z=0
+            lm = results.pose_landmarks.landmark[idx]
+            return [lm.x, lm.y, 0.0]
+        lm = world_landmarks[idx]
+        return [lm.x, lm.y, lm.z]
+    
+    # Joint angles - using 3D world coordinates for physical accuracy
+    features['left_elbow_angle'] = calculate_angle(
+        get_world_point(11), get_world_point(13), get_world_point(15)
+    )
+    features['right_elbow_angle'] = calculate_angle(
+        get_world_point(12), get_world_point(14), get_world_point(16)
+    )
+    features['left_shoulder_angle'] = calculate_angle(
+        get_world_point(13), get_world_point(11), get_world_point(23)
+    )
+    features['right_shoulder_angle'] = calculate_angle(
+        get_world_point(14), get_world_point(12), get_world_point(24)
+    )
+    features['left_knee_angle'] = calculate_angle(
+        get_world_point(23), get_world_point(25), get_world_point(27)
+    )
+    features['right_knee_angle'] = calculate_angle(
+        get_world_point(24), get_world_point(26), get_world_point(28)
+    )
     
     # Heights (relative to hip center)
     hip_center_y = (kpts[23][1] + kpts[24][1]) / 2
@@ -267,7 +352,14 @@ def extract_geometric_features(image_path, apply_mirror=False):
     if apply_mirror:
         features = mirror_features(features)
 
-    return features
+    # Return features with metadata for validation gate
+    metadata = {
+        'pose_landmarks': results.pose_landmarks,
+        'stick_detected': stick_results.keypoints is not None and len(stick_results.keypoints.data) > 0,
+        'stick_confidence': stick_confidence if 'stick_confidence' in locals() else (stick_kpts[0, 2] if 'stick_kpts' in locals() else 0.0)
+    }
+    
+    return features, metadata
 
 
 def analyze_reference_images(viewpoint_filter=None, apply_mirror=False):
@@ -296,10 +388,42 @@ def analyze_reference_images(viewpoint_filter=None, apply_mirror=False):
             print(f"Processing {viewpoint}/{class_name}: {len(images)} images")
             
             all_features = []
+            rejected_count = 0
+            total_count = 0
+            
             for img_path in tqdm(images, desc=f"{viewpoint}/{class_name}", leave=False):
-                features = extract_geometric_features(img_path, apply_mirror=apply_mirror)
-                if features:
-                    all_features.append(features)
+                total_count += 1
+                result = extract_geometric_features(img_path, apply_mirror=apply_mirror)
+                
+                if result is None:
+                    rejected_count += 1
+                    continue
+                
+                features, metadata = result
+                
+                # Issue #2: Apply validation gate before accepting into templates
+                is_valid, reason = validate_features(
+                    features,
+                    metadata['pose_landmarks'],
+                    metadata['stick_detected'],
+                    metadata['stick_confidence']
+                )
+                
+                if not is_valid:
+                    rejected_count += 1
+                    print(f"  [REJECTED] {img_path.name}: {reason}")
+                    continue
+                
+                all_features.append(features)
+            
+            print(f"  Accepted: {len(all_features)}/{total_count} ({100*len(all_features)/total_count:.1f}%)")
+            print(f"  Rejected: {rejected_count}/{total_count}")
+            
+            # Issue #2: Warn if acceptance rate is too low
+            MIN_ACCEPTANCE_RATE = 0.50  # 50%
+            if len(all_features) / total_count < MIN_ACCEPTANCE_RATE:
+                print(f"  WARNING: Low acceptance rate! Expected >{MIN_ACCEPTANCE_RATE*100:.0f}%, "
+                      f"got {100*len(all_features)/total_count:.1f}%")
             
             if len(all_features) == 0:
                 print(f"  Warning: No valid features extracted")

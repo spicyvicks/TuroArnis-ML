@@ -10,9 +10,18 @@ from ultralytics import YOLO
 
 
 def calculate_angle(p1, p2, p3):
-    """Calculate angle at p2 formed by p1-p2-p3"""
-    v1 = np.array([p1[0] - p2[0], p1[1] - p2[1]])
-    v2 = np.array([p3[0] - p2[0], p3[1] - p2[1]])
+    """Calculate 3D angle at p2 formed by p1-p2-p3. Matches TuroArnis app."""
+    # Handle 2D input for backward compatibility
+    if len(p1) == 2:
+        p1 = [p1[0], p1[1], 0.0]
+    if len(p2) == 2:
+        p2 = [p2[0], p2[1], 0.0]
+    if len(p3) == 2:
+        p3 = [p3[0], p3[1], 0.0]
+    
+    # 3D vectors
+    v1 = np.array([p1[0]-p2[0], p1[1]-p2[1], p1[2]-p2[2]])
+    v2 = np.array([p3[0]-p2[0], p3[1]-p2[1], p3[2]-p2[2]])
     
     cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-6)
     angle = np.arccos(np.clip(cos_angle, -1.0, 1.0))
@@ -73,22 +82,43 @@ def extract_raw_features(image, stick_detector):
         stick_grip = [stick_kpts[0, 0] / w, stick_kpts[0, 1] / h, 0.0, stick_kpts[0, 2]]
         stick_tip = [stick_kpts[1, 0] / w, stick_kpts[1, 1] / h, 0.0, stick_kpts[1, 2]]
     else:
-        # Fallback if stick not detected
-        stick_grip = [0.5, 0.5, 0.0, 0.0]
-        stick_tip = [0.5, 0.5, 0.0, 0.0]
+        # Issue #5: Use NaN sentinel for missing stick detection
+        stick_grip = [float('nan'), float('nan'), 0.0, 0.0]
+        stick_tip = [float('nan'), float('nan'), 0.0, 0.0]
     
     stick_keypoints = np.array([stick_grip, stick_tip])
     
     # Compute global geometric features
     features = {}
     
-    # Joint angles
-    features['left_elbow_angle'] = calculate_angle(kpts[11], kpts[13], kpts[15])
-    features['right_elbow_angle'] = calculate_angle(kpts[12], kpts[14], kpts[16])
-    features['left_shoulder_angle'] = calculate_angle(kpts[13], kpts[11], kpts[23])
-    features['right_shoulder_angle'] = calculate_angle(kpts[14], kpts[12], kpts[24])
-    features['left_knee_angle'] = calculate_angle(kpts[23], kpts[25], kpts[27])
-    features['right_knee_angle'] = calculate_angle(kpts[24], kpts[26], kpts[28])
+    # Issue #4: Use 3D world landmarks for angle calculation
+    world_landmarks = results.pose_world_landmarks.landmark if results.pose_world_landmarks else None
+    
+    def get_world_point(idx):
+        if world_landmarks is None:
+            lm = results.pose_landmarks.landmark[idx]
+            return [lm.x, lm.y, 0.0]
+        lm = world_landmarks[idx]
+        return [lm.x, lm.y, lm.z]
+    
+    features['left_elbow_angle'] = calculate_angle(
+        get_world_point(11), get_world_point(13), get_world_point(15)
+    )
+    features['right_elbow_angle'] = calculate_angle(
+        get_world_point(12), get_world_point(14), get_world_point(16)
+    )
+    features['left_shoulder_angle'] = calculate_angle(
+        get_world_point(13), get_world_point(11), get_world_point(23)
+    )
+    features['right_shoulder_angle'] = calculate_angle(
+        get_world_point(14), get_world_point(12), get_world_point(24)
+    )
+    features['left_knee_angle'] = calculate_angle(
+        get_world_point(23), get_world_point(25), get_world_point(27)
+    )
+    features['right_knee_angle'] = calculate_angle(
+        get_world_point(24), get_world_point(26), get_world_point(28)
+    )
     
     # Heights relative to hip center
     hip_center_y = (kpts[23][1] + kpts[24][1]) / 2
