@@ -1,0 +1,501 @@
+﻿python : 2026-04-20 12:09:56.292783: I tensorflow/core/util/port.cc:113] oneDNN custom operations are on. You may see 
+slightly different numerical results due to floating-point round-off errors from different computation orders. To turn 
+them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+At line:1 char:48
++ ... oArnis-ML ; python hybrid_classifier/1_extract_reference_features.py  ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2026-04-20 12:0...ONEDNN_OPTS=0`.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+WARNING:tensorflow:From 
+C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\site-packages\keras\src\losses.py:2976: The name 
+tf.losses.sparse_softmax_cross_entropy is deprecated. Please use tf.compat.v1.losses.sparse_softmax_cross_entropy 
+instead.
+
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+Processing front/crown_thrust_correct: 15 images
+
+front/crown_thrust_correct:   0%|          | 0/15 [00:00<?, ?it/s]WARNING: All log messages before 
+absl::InitializeLog() is called are written to STDERR
+W0000 00:00:1776658218.618042   21104 inference_feedback_manager.cc:114] Feedback manager requires a model with a 
+single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1776658218.979410   21104 inference_feedback_manager.cc:114] Feedback manager requires a model with a 
+single signature inference. Disabling support for feedback tensors.
+C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\site-packages\google\protobuf\symbol_database.py:55: 
+UserWarning: SymbolDatabase.GetPrototype() is deprecated. Please use message_factory.GetMessageClass() instead. 
+SymbolDatabase.GetPrototype() will be removed soon.
+  warnings.warn('SymbolDatabase.GetPrototype() is deprecated. Please '
+
+front/crown_thrust_correct:   7%|6         | 1/15 [00:03<00:55,  3.99s/it]
+front/crown_thrust_correct:  13%|#3        | 2/15 [00:04<00:28,  2.19s/it]
+front/crown_thrust_correct:  20%|##        | 3/15 [00:06<00:22,  1.83s/it]
+front/crown_thrust_correct:  27%|##6       | 4/15 [00:07<00:18,  1.65s/it]
+front/crown_thrust_correct:  33%|###3      | 5/15 [00:09<00:16,  1.65s/it]
+front/crown_thrust_correct:  40%|####      | 6/15 [00:10<00:13,  1.52s/it]
+front/crown_thrust_correct:  47%|####6     | 7/15 [00:11<00:10,  1.29s/it]
+front/crown_thrust_correct:  53%|#####3    | 8/15 [00:12<00:08,  1.28s/it]
+front/crown_thrust_correct:  60%|######    | 9/15 [00:13<00:06,  1.13s/it]
+front/crown_thrust_correct:  67%|######6   | 10/15 [00:14<00:05,  1.04s/it]
+front/crown_thrust_correct:  73%|#######3  | 11/15 [00:15<00:03,  1.01it/s]
+front/crown_thrust_correct:  80%|########  | 12/15 [00:16<00:03,  1.02s/it]
+front/crown_thrust_correct:  87%|########6 | 13/15 [00:17<00:01,  1.01it/s]
+front/crown_thrust_correct:  93%|#########3| 14/15 [00:18<00:01,  1.01s/it]
+front/crown_thrust_correct: 100%|##########| 15/15 [00:19<00:00,  1.01it/s]
+  [REJECTED] 1.jpg: Stick not detected by YOLO
+  [REJECTED] 10-1 (69).jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 2.jpg: Low visibility on joint 15 (< 0.5)
+  [REJECTED] 3.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 4.jpg: Low visibility on joint 14 (< 0.5)
+  [REJECTED] 6 (57).jpg: Low visibility on joint 15 (< 0.5)
+  [REJECTED] 8-1 (116).jpg: Stick not detected by YOLO
+  [REJECTED] Copy of VideoCapture_20260210-130542.jpg: Stick not detected by YOLO
+  [REJECTED] Copy of VideoCapture_20260210-131602.jpg: Stick not detected by YOLO
+  [REJECTED] Crown Block_4.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 3 (1).png: Low visibility on joint 15 (< 0.5)
+  Accepted: 4/15 (26.7%)
+  Rejected: 11/15
+  WARNING: Low acceptance rate! Expected >50%, got 26.7%
+Processing front/left_chest_thrust_correct: 14 images
+                                                                           
+
+front/left_chest_thrust_correct:   0%|          | 0/14 [00:00<?, ?it/s]
+front/left_chest_thrust_correct:   7%|7         | 1/14 [00:01<00:18,  1.39s/it]
+front/left_chest_thrust_correct:  14%|#4        | 2/14 [00:02<00:17,  1.43s/it]
+front/left_chest_thrust_correct:  21%|##1       | 3/14 [00:03<00:14,  1.29s/it]
+front/left_chest_thrust_correct:  29%|##8       | 4/14 [00:05<00:12,  1.24s/it]
+front/left_chest_thrust_correct:  36%|###5      | 5/14 [00:06<00:11,  1.29s/it]
+front/left_chest_thrust_correct:  43%|####2     | 6/14 [00:07<00:09,  1.23s/it]
+front/left_chest_thrust_correct:  50%|#####     | 7/14 [00:08<00:07,  1.09s/it]
+front/left_chest_thrust_correct:  57%|#####7    | 8/14 [00:09<00:06,  1.05s/it]
+front/left_chest_thrust_correct:  64%|######4   | 9/14 [00:10<00:04,  1.03it/s]
+front/left_chest_thrust_correct:  71%|#######1  | 10/14 [00:10<00:03,  1.09it/s]
+front/left_chest_thrust_correct:  79%|#######8  | 11/14 [00:11<00:02,  1.12it/s]
+front/left_chest_thrust_correct:  86%|########5 | 12/14 [00:12<00:01,  1.16it/s]
+front/left_chest_thrust_correct:  93%|#########2| 13/14 [00:13<00:00,  1.06it/s]
+front/left_chest_thrust_correct: 100%|##########| 14/14 [00:14<00:00,  1.04it/s]
+  [REJECTED] 4.jpg: Low visibility on joint 14 (< 0.5)
+  [REJECTED] 7 (1).jpg: Low visibility on joint 15 (< 0.5)
+  [REJECTED] 9-1 (51).jpg: Low visibility on joint 14 (< 0.5)
+  [REJECTED] Copy of VideoCapture_20260210-131403.jpg: Stick not detected by YOLO
+  [REJECTED] 3.png: Low visibility on joint 14 (< 0.5)
+  Accepted: 9/14 (64.3%)
+  Rejected: 5/14
+Processing front/left_elbow_block_correct: 16 images
+                                                                                
+
+front/left_elbow_block_correct:   0%|          | 0/16 [00:00<?, ?it/s]
+front/left_elbow_block_correct:   6%|6         | 1/16 [00:01<00:16,  1.08s/it]
+front/left_elbow_block_correct:  12%|#2        | 2/16 [00:02<00:15,  1.11s/it]
+front/left_elbow_block_correct:  19%|#8        | 3/16 [00:03<00:14,  1.13s/it]
+front/left_elbow_block_correct:  25%|##5       | 4/16 [00:04<00:13,  1.15s/it]
+front/left_elbow_block_correct:  31%|###1      | 5/16 [00:05<00:13,  1.18s/it]
+front/left_elbow_block_correct:  38%|###7      | 6/16 [00:06<00:11,  1.17s/it]
+front/left_elbow_block_correct:  44%|####3     | 7/16 [00:08<00:10,  1.17s/it]
+front/left_elbow_block_correct:  50%|#####     | 8/16 [00:08<00:08,  1.05s/it]
+front/left_elbow_block_correct:  56%|#####6    | 9/16 [00:09<00:06,  1.02it/s]
+front/left_elbow_block_correct:  62%|######2   | 10/16 [00:10<00:05,  1.07it/s]
+front/left_elbow_block_correct:  69%|######8   | 11/16 [00:11<00:04,  1.09it/s]
+front/left_elbow_block_correct:  75%|#######5  | 12/16 [00:12<00:04,  1.02s/it]
+front/left_elbow_block_correct:  81%|########1 | 13/16 [00:13<00:03,  1.03s/it]
+front/left_elbow_block_correct:  88%|########7 | 14/16 [00:14<00:02,  1.01s/it]
+front/left_elbow_block_correct:  94%|#########3| 15/16 [00:15<00:00,  1.04it/s]
+front/left_elbow_block_correct: 100%|##########| 16/16 [00:16<00:00,  1.06s/it]
+  [REJECTED] 1.jpg: Low visibility on joint 14 (< 0.5)
+  [REJECTED] 10-1 (22).jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 2.jpg: Low visibility on joint 14 (< 0.5)
+  [REJECTED] Copy of VideoCapture_20260210-130112.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] Copy of VideoCapture_20260210-131356.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 1 (2).png: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 5.png: Low visibility on joint 13 (< 0.5)
+  Accepted: 9/16 (56.2%)
+  Rejected: 7/16
+Processing front/left_eye_thrust_correct: 16 images
+                                                                               
+
+front/left_eye_thrust_correct:   0%|          | 0/16 [00:00<?, ?it/s]
+front/left_eye_thrust_correct:   6%|6         | 1/16 [00:01<00:22,  1.50s/it]
+front/left_eye_thrust_correct:  12%|#2        | 2/16 [00:02<00:19,  1.38s/it]
+front/left_eye_thrust_correct:  19%|#8        | 3/16 [00:04<00:18,  1.45s/it]
+front/left_eye_thrust_correct:  25%|##5       | 4/16 [00:05<00:18,  1.50s/it]
+front/left_eye_thrust_correct:  31%|###1      | 5/16 [00:07<00:16,  1.52s/it]
+front/left_eye_thrust_correct:  38%|###7      | 6/16 [00:08<00:14,  1.49s/it]
+front/left_eye_thrust_correct:  44%|####3     | 7/16 [00:10<00:13,  1.45s/it]
+front/left_eye_thrust_correct:  50%|#####     | 8/16 [00:11<00:10,  1.26s/it]
+front/left_eye_thrust_correct:  56%|#####6    | 9/16 [00:12<00:08,  1.18s/it]
+front/left_eye_thrust_correct:  62%|######2   | 10/16 [00:13<00:06,  1.11s/it]
+front/left_eye_thrust_correct:  69%|######8   | 11/16 [00:14<00:05,  1.06s/it]
+front/left_eye_thrust_correct:  75%|#######5  | 12/16 [00:15<00:04,  1.08s/it]
+front/left_eye_thrust_correct:  81%|########1 | 13/16 [00:16<00:03,  1.05s/it]
+front/left_eye_thrust_correct:  88%|########7 | 14/16 [00:17<00:02,  1.03s/it]
+front/left_eye_thrust_correct:  94%|#########3| 15/16 [00:18<00:01,  1.04s/it]
+front/left_eye_thrust_correct: 100%|##########| 16/16 [00:19<00:00,  1.08s/it]
+  [REJECTED] 1.jpg: Stick not detected by YOLO
+  [REJECTED] 3.jpg: Stick not detected by YOLO
+  [REJECTED] 5.jpg: Stick not detected by YOLO
+  [REJECTED] Copy of VideoCapture_20260210-131413.jpg: Stick not detected by YOLO
+  [REJECTED] Copy of VideoCapture_20260210-131557.jpg: Stick not detected by YOLO
+  Accepted: 11/16 (68.8%)
+  Rejected: 5/16
+Processing front/left_knee_block_correct: 15 images
+                                                                              
+
+front/left_knee_block_correct:   0%|          | 0/15 [00:00<?, ?it/s]
+front/left_knee_block_correct:   7%|6         | 1/15 [00:01<00:20,  1.45s/it]
+front/left_knee_block_correct:  13%|#3        | 2/15 [00:02<00:18,  1.45s/it]
+front/left_knee_block_correct:  20%|##        | 3/15 [00:04<00:16,  1.39s/it]
+front/left_knee_block_correct:  27%|##6       | 4/15 [00:05<00:14,  1.33s/it]
+front/left_knee_block_correct:  33%|###3      | 5/15 [00:06<00:11,  1.20s/it]
+front/left_knee_block_correct:  40%|####      | 6/15 [00:07<00:10,  1.12s/it]
+front/left_knee_block_correct:  47%|####6     | 7/15 [00:08<00:08,  1.05s/it]
+front/left_knee_block_correct:  53%|#####3    | 8/15 [00:09<00:06,  1.01it/s]
+front/left_knee_block_correct:  60%|######    | 9/15 [00:10<00:05,  1.05it/s]
+front/left_knee_block_correct:  67%|######6   | 10/15 [00:10<00:04,  1.07it/s]
+front/left_knee_block_correct:  73%|#######3  | 11/15 [00:11<00:03,  1.10it/s]
+front/left_knee_block_correct:  80%|########  | 12/15 [00:12<00:02,  1.01it/s]
+front/left_knee_block_correct:  87%|########6 | 13/15 [00:13<00:01,  1.00it/s]
+front/left_knee_block_correct:  93%|#########3| 14/15 [00:14<00:00,  1.01it/s]
+front/left_knee_block_correct: 100%|##########| 15/15 [00:16<00:00,  1.04s/it]
+  [REJECTED] 3.jpg: Low visibility on joint 14 (< 0.5)
+  [REJECTED] 5.jpg: Low visibility on joint 14 (< 0.5)
+  [REJECTED] 9-1 (84).jpg: Stick not detected by YOLO
+  [REJECTED] Copy of VideoCapture_20260210-131552.jpg: Stick not detected by YOLO
+  Accepted: 11/15 (73.3%)
+  Rejected: 4/15
+Processing front/left_temple_block_correct: 14 images
+                                                                              
+
+front/left_temple_block_correct:   0%|          | 0/14 [00:00<?, ?it/s]
+front/left_temple_block_correct:   7%|7         | 1/14 [00:01<00:17,  1.33s/it]
+front/left_temple_block_correct:  14%|#4        | 2/14 [00:02<00:17,  1.45s/it]
+front/left_temple_block_correct:  21%|##1       | 3/14 [00:04<00:16,  1.49s/it]
+front/left_temple_block_correct:  29%|##8       | 4/14 [00:05<00:15,  1.50s/it]
+front/left_temple_block_correct:  36%|###5      | 5/14 [00:07<00:12,  1.36s/it]
+front/left_temple_block_correct:  43%|####2     | 6/14 [00:08<00:11,  1.40s/it]
+front/left_temple_block_correct:  50%|#####     | 7/14 [00:09<00:08,  1.27s/it]
+front/left_temple_block_correct:  57%|#####7    | 8/14 [00:10<00:07,  1.17s/it]
+front/left_temple_block_correct:  64%|######4   | 9/14 [00:11<00:05,  1.07s/it]
+front/left_temple_block_correct:  71%|#######1  | 10/14 [00:12<00:04,  1.00s/it]
+front/left_temple_block_correct:  79%|#######8  | 11/14 [00:13<00:03,  1.00s/it]
+front/left_temple_block_correct:  86%|########5 | 12/14 [00:14<00:01,  1.01it/s]
+front/left_temple_block_correct:  93%|#########2| 13/14 [00:15<00:01,  1.02s/it]
+front/left_temple_block_correct: 100%|##########| 14/14 [00:16<00:00,  1.02s/it]
+  [REJECTED] 2.jpg: Low visibility on joint 15 (< 0.5)
+  [REJECTED] 3.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 8-1 (18).jpg: Low visibility on joint 16 (< 0.5)
+  [REJECTED] Copy of VideoCapture_20260210-131536.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 1.png: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 5.png: Low visibility on joint 13 (< 0.5)
+  Accepted: 8/14 (57.1%)
+  Rejected: 6/14
+Processing front/right_chest_thrust_correct: 13 images
+                                                                                
+
+front/right_chest_thrust_correct:   0%|          | 0/13 [00:00<?, ?it/s]
+front/right_chest_thrust_correct:   8%|7         | 1/13 [00:01<00:19,  1.61s/it]
+front/right_chest_thrust_correct:  15%|#5        | 2/13 [00:03<00:17,  1.59s/it]
+front/right_chest_thrust_correct:  23%|##3       | 3/13 [00:04<00:15,  1.54s/it]
+front/right_chest_thrust_correct:  31%|###       | 4/13 [00:05<00:12,  1.41s/it]
+front/right_chest_thrust_correct:  38%|###8      | 5/13 [00:07<00:10,  1.35s/it]
+front/right_chest_thrust_correct:  46%|####6     | 6/13 [00:08<00:08,  1.23s/it]
+front/right_chest_thrust_correct:  54%|#####3    | 7/13 [00:09<00:06,  1.16s/it]
+front/right_chest_thrust_correct:  62%|######1   | 8/13 [00:10<00:05,  1.13s/it]
+front/right_chest_thrust_correct:  69%|######9   | 9/13 [00:11<00:04,  1.07s/it]
+front/right_chest_thrust_correct:  77%|#######6  | 10/13 [00:12<00:03,  1.06s/it]
+front/right_chest_thrust_correct:  85%|########4 | 11/13 [00:13<00:02,  1.02s/it]
+front/right_chest_thrust_correct:  92%|#########2| 12/13 [00:13<00:00,  1.05it/s]
+front/right_chest_thrust_correct: 100%|##########| 13/13 [00:14<00:00,  1.10it/s]
+  [REJECTED] 6 (41).jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 7 (1).jpg: Low visibility on joint 14 (< 0.5)
+  [REJECTED] 9-1 (68).jpg: Low visibility on joint 14 (< 0.5)
+  [REJECTED] Copy of VideoCapture_20260210-130520.jpg: Low visibility on joint 16 (< 0.5)
+  [REJECTED] Copy of VideoCapture_20260210-131405.jpg: Stick not detected by YOLO
+  [REJECTED] Copy of VideoCapture_20260210-131550.jpg: Stick not detected by YOLO
+  Accepted: 7/13 (53.8%)
+  Rejected: 6/13
+Processing front/right_elbow_block_correct: 16 images
+                                                                                 
+
+front/right_elbow_block_correct:   0%|          | 0/16 [00:00<?, ?it/s]
+front/right_elbow_block_correct:   6%|6         | 1/16 [00:01<00:15,  1.05s/it]
+front/right_elbow_block_correct:  12%|#2        | 2/16 [00:01<00:13,  1.06it/s]
+front/right_elbow_block_correct:  19%|#8        | 3/16 [00:03<00:13,  1.06s/it]
+front/right_elbow_block_correct:  25%|##5       | 4/16 [00:04<00:13,  1.12s/it]
+front/right_elbow_block_correct:  31%|###1      | 5/16 [00:05<00:13,  1.20s/it]
+front/right_elbow_block_correct:  38%|###7      | 6/16 [00:06<00:12,  1.24s/it]
+front/right_elbow_block_correct:  44%|####3     | 7/16 [00:08<00:10,  1.18s/it]
+front/right_elbow_block_correct:  50%|#####     | 8/16 [00:08<00:08,  1.06s/it]
+front/right_elbow_block_correct:  56%|#####6    | 9/16 [00:09<00:07,  1.01s/it]
+front/right_elbow_block_correct:  62%|######2   | 10/16 [00:10<00:05,  1.08it/s]
+front/right_elbow_block_correct:  69%|######8   | 11/16 [00:11<00:04,  1.13it/s]
+front/right_elbow_block_correct:  75%|#######5  | 12/16 [00:12<00:03,  1.17it/s]
+front/right_elbow_block_correct:  81%|########1 | 13/16 [00:13<00:02,  1.09it/s]
+front/right_elbow_block_correct:  88%|########7 | 14/16 [00:14<00:01,  1.07it/s]
+front/right_elbow_block_correct:  94%|#########3| 15/16 [00:14<00:00,  1.09it/s]
+front/right_elbow_block_correct: 100%|##########| 16/16 [00:15<00:00,  1.09it/s]
+  [REJECTED] 1.jpg: Stick not detected by YOLO
+  [REJECTED] 10-1 (31).jpg: Low visibility on joint 15 (< 0.5)
+  [REJECTED] 2.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 3.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 4.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 9-1 (32).jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] Copy of VideoCapture_20260210-130118.jpg: Stick not detected by YOLO
+  [REJECTED] Copy of VideoCapture_20260210-130507.jpg: Stick not detected by YOLO
+  [REJECTED] Copy of VideoCapture_20260210-131358.jpg: Low visibility on joint 14 (< 0.5)
+  [REJECTED] 1 (2).png: Low visibility on joint 15 (< 0.5)
+  [REJECTED] 1.png: Low visibility on joint 13 (< 0.5)
+  Accepted: 5/16 (31.2%)
+  Rejected: 11/16
+  WARNING: Low acceptance rate! Expected >50%, got 31.2%
+Processing front/right_eye_thrust_correct: 15 images
+                                                                                
+
+front/right_eye_thrust_correct:   0%|          | 0/15 [00:00<?, ?it/s]
+front/right_eye_thrust_correct:   7%|6         | 1/15 [00:01<00:16,  1.15s/it]
+front/right_eye_thrust_correct:  13%|#3        | 2/15 [00:02<00:16,  1.30s/it]
+front/right_eye_thrust_correct:  20%|##        | 3/15 [00:03<00:13,  1.15s/it]
+front/right_eye_thrust_correct:  27%|##6       | 4/15 [00:04<00:13,  1.21s/it]
+front/right_eye_thrust_correct:  33%|###3      | 5/15 [00:05<00:11,  1.12s/it]
+front/right_eye_thrust_correct:  40%|####      | 6/15 [00:06<00:09,  1.01s/it]
+front/right_eye_thrust_correct:  47%|####6     | 7/15 [00:07<00:07,  1.05it/s]
+front/right_eye_thrust_correct:  53%|#####3    | 8/15 [00:08<00:06,  1.10it/s]
+front/right_eye_thrust_correct:  60%|######    | 9/15 [00:09<00:06,  1.02s/it]
+front/right_eye_thrust_correct:  67%|######6   | 10/15 [00:10<00:05,  1.11s/it]
+front/right_eye_thrust_correct:  73%|#######3  | 11/15 [00:11<00:04,  1.12s/it]
+front/right_eye_thrust_correct:  80%|########  | 12/15 [00:12<00:03,  1.05s/it]
+front/right_eye_thrust_correct:  87%|########6 | 13/15 [00:13<00:02,  1.04s/it]
+front/right_eye_thrust_correct:  93%|#########3| 14/15 [00:14<00:00,  1.01it/s]
+front/right_eye_thrust_correct: 100%|##########| 15/15 [00:15<00:00,  1.01s/it]
+  [REJECTED] 1.jpg: Low visibility on joint 14 (< 0.5)
+  [REJECTED] 3.jpg: Low visibility on joint 14 (< 0.5)
+  [REJECTED] Copy of VideoCapture_20260210-131559.jpg: Stick not detected by YOLO
+  [REJECTED] 2 (1).png: Low visibility on joint 16 (< 0.5)
+  [REJECTED] 2.png: Low visibility on joint 14 (< 0.5)
+  [REJECTED] 3 (2).png: Low visibility on joint 14 (< 0.5)
+  Accepted: 9/15 (60.0%)
+  Rejected: 6/15
+Processing front/right_knee_block_correct: 15 images
+                                                                               
+
+front/right_knee_block_correct:   0%|          | 0/15 [00:00<?, ?it/s]
+front/right_knee_block_correct:   7%|6         | 1/15 [00:01<00:18,  1.32s/it]
+front/right_knee_block_correct:  13%|#3        | 2/15 [00:02<00:16,  1.30s/it]
+front/right_knee_block_correct:  20%|##        | 3/15 [00:03<00:15,  1.32s/it]
+front/right_knee_block_correct:  27%|##6       | 4/15 [00:05<00:14,  1.34s/it]
+front/right_knee_block_correct:  33%|###3      | 5/15 [00:06<00:13,  1.39s/it]
+front/right_knee_block_correct:  40%|####      | 6/15 [00:08<00:12,  1.35s/it]
+front/right_knee_block_correct:  47%|####6     | 7/15 [00:08<00:09,  1.17s/it]
+front/right_knee_block_correct:  53%|#####3    | 8/15 [00:09<00:07,  1.09s/it]
+front/right_knee_block_correct:  60%|######    | 9/15 [00:10<00:06,  1.02s/it]
+front/right_knee_block_correct:  67%|######6   | 10/15 [00:11<00:04,  1.02it/s]
+front/right_knee_block_correct:  73%|#######3  | 11/15 [00:12<00:03,  1.04it/s]
+front/right_knee_block_correct:  80%|########  | 12/15 [00:13<00:02,  1.06it/s]
+front/right_knee_block_correct:  87%|########6 | 13/15 [00:14<00:02,  1.01s/it]
+front/right_knee_block_correct:  93%|#########3| 14/15 [00:15<00:00,  1.00it/s]
+front/right_knee_block_correct: 100%|##########| 15/15 [00:16<00:00,  1.02s/it]
+  [REJECTED] 2.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 6 (45).jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 7 (1).jpg: Low visibility on joint 14 (< 0.5)
+  [REJECTED] 8-1 (95).jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] Copy of VideoCapture_20260210-131555.jpg: Stick not detected by YOLO
+  Accepted: 10/15 (66.7%)
+  Rejected: 5/15
+Processing front/right_temple_block_correct: 16 images
+                                                                               
+
+front/right_temple_block_correct:   0%|          | 0/16 [00:00<?, ?it/s]
+front/right_temple_block_correct:   6%|6         | 1/16 [00:01<00:18,  1.25s/it]
+front/right_temple_block_correct:  12%|#2        | 2/16 [00:02<00:17,  1.24s/it]
+front/right_temple_block_correct:  19%|#8        | 3/16 [00:03<00:16,  1.26s/it]
+front/right_temple_block_correct:  25%|##5       | 4/16 [00:04<00:14,  1.21s/it]
+front/right_temple_block_correct:  31%|###1      | 5/16 [00:06<00:13,  1.25s/it]
+front/right_temple_block_correct:  38%|###7      | 6/16 [00:07<00:12,  1.20s/it]
+front/right_temple_block_correct:  44%|####3     | 7/16 [00:08<00:10,  1.17s/it]
+front/right_temple_block_correct:  50%|#####     | 8/16 [00:09<00:08,  1.05s/it]
+front/right_temple_block_correct:  56%|#####6    | 9/16 [00:10<00:07,  1.05s/it]
+front/right_temple_block_correct:  62%|######2   | 10/16 [00:11<00:05,  1.01it/s]
+front/right_temple_block_correct:  69%|######8   | 11/16 [00:11<00:04,  1.06it/s]
+front/right_temple_block_correct:  75%|#######5  | 12/16 [00:12<00:03,  1.12it/s]
+front/right_temple_block_correct:  81%|########1 | 13/16 [00:13<00:02,  1.03it/s]
+front/right_temple_block_correct:  88%|########7 | 14/16 [00:14<00:01,  1.07it/s]
+front/right_temple_block_correct:  94%|#########3| 15/16 [00:15<00:00,  1.08it/s]
+front/right_temple_block_correct: 100%|##########| 16/16 [00:16<00:00,  1.04it/s]
+  [REJECTED] 5.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 6 (17).jpg: Low visibility on joint 16 (< 0.5)
+  [REJECTED] 9-1 (19).jpg: Stick not detected by YOLO
+  Accepted: 13/16 (81.2%)
+  Rejected: 3/16
+Processing front/solar_plexus_thrust_correct: 16 images
+                                                                                 
+
+front/solar_plexus_thrust_correct:   0%|          | 0/16 [00:00<?, ?it/s]
+front/solar_plexus_thrust_correct:   6%|6         | 1/16 [00:01<00:21,  1.41s/it]
+front/solar_plexus_thrust_correct:  12%|#2        | 2/16 [00:02<00:18,  1.35s/it]
+front/solar_plexus_thrust_correct:  19%|#8        | 3/16 [00:04<00:17,  1.32s/it]
+front/solar_plexus_thrust_correct:  25%|##5       | 4/16 [00:05<00:15,  1.31s/it]
+front/solar_plexus_thrust_correct:  31%|###1      | 5/16 [00:06<00:14,  1.29s/it]
+front/solar_plexus_thrust_correct:  38%|###7      | 6/16 [00:07<00:12,  1.23s/it]
+front/solar_plexus_thrust_correct:  44%|####3     | 7/16 [00:08<00:09,  1.07s/it]
+front/solar_plexus_thrust_correct:  50%|#####     | 8/16 [00:09<00:07,  1.02it/s]
+front/solar_plexus_thrust_correct:  56%|#####6    | 9/16 [00:10<00:06,  1.05it/s]
+front/solar_plexus_thrust_correct:  62%|######2   | 10/16 [00:10<00:05,  1.11it/s]
+front/solar_plexus_thrust_correct:  69%|######8   | 11/16 [00:11<00:04,  1.17it/s]
+front/solar_plexus_thrust_correct:  75%|#######5  | 12/16 [00:12<00:03,  1.11it/s]
+front/solar_plexus_thrust_correct:  81%|########1 | 13/16 [00:13<00:02,  1.14it/s]
+front/solar_plexus_thrust_correct:  88%|########7 | 14/16 [00:14<00:01,  1.13it/s]
+front/solar_plexus_thrust_correct:  94%|#########3| 15/16 [00:15<00:00,  1.14it/s]
+front/solar_plexus_thrust_correct: 100%|##########| 16/16 [00:15<00:00,  1.17it/s]
+  [REJECTED] 6 (32).jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 9-1 (46).jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] Copy of VideoCapture_20260210-130511.jpg: Stick not detected by YOLO
+  [REJECTED] Copy of VideoCapture_20260210-131400.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] Copy of VideoCapture_20260210-131545.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 1 (3).png: Stick not detected by YOLO
+  Accepted: 10/16 (62.5%)
+  Rejected: 6/16
+Processing front/neutral: 10 images
+                                                                                  
+
+front/neutral:   0%|          | 0/10 [00:00<?, ?it/s]
+front/neutral:  10%|#         | 1/10 [00:00<00:06,  1.44it/s]
+front/neutral:  20%|##        | 2/10 [00:01<00:05,  1.37it/s]
+front/neutral:  30%|###       | 3/10 [00:02<00:05,  1.23it/s]
+front/neutral:  40%|####      | 4/10 [00:03<00:04,  1.25it/s]
+front/neutral:  50%|#####     | 5/10 [00:03<00:03,  1.26it/s]
+front/neutral:  60%|######    | 6/10 [00:04<00:03,  1.23it/s]
+front/neutral:  70%|#######   | 7/10 [00:05<00:02,  1.23it/s]
+front/neutral:  80%|########  | 8/10 [00:06<00:01,  1.20it/s]
+front/neutral:  90%|######### | 9/10 [00:07<00:00,  1.24it/s]
+front/neutral: 100%|##########| 10/10 [00:07<00:00,  1.26it/s]
+  [REJECTED] images (33).jpg: Stick not detected by YOLO
+  [REJECTED] images (34).jpg: Stick not detected by YOLO
+  [REJECTED] images (36).jpg: Low visibility on joint 15 (< 0.5)
+  [REJECTED] images (42).jpg: Stick not detected by YOLO
+  [REJECTED] images (43).jpg: Stick not detected by YOLO
+  [REJECTED] images (45).jpg: Stick not detected by YOLO
+  [REJECTED] images (47).jpg: Stick not detected by YOLO
+  [REJECTED] images.jpg: Stick not detected by YOLO
+  Accepted: 2/10 (20.0%)
+  Rejected: 8/10
+  WARNING: Low acceptance rate! Expected >50%, got 20.0%
+Processing left/crown_thrust_correct: 10 images
+                                                              
+
+left/crown_thrust_correct:   0%|          | 0/10 [00:00<?, ?it/s]
+left/crown_thrust_correct:  10%|#         | 1/10 [00:01<00:10,  1.21s/it]
+left/crown_thrust_correct:  20%|##        | 2/10 [00:01<00:07,  1.05it/s]
+left/crown_thrust_correct:  30%|###       | 3/10 [00:02<00:04,  1.43it/s]
+left/crown_thrust_correct:  40%|####      | 4/10 [00:03<00:05,  1.17it/s]
+left/crown_thrust_correct:  50%|#####     | 5/10 [00:04<00:04,  1.00it/s]
+left/crown_thrust_correct:  60%|######    | 6/10 [00:05<00:04,  1.05s/it]
+left/crown_thrust_correct:  70%|#######   | 7/10 [00:07<00:03,  1.16s/it]
+left/crown_thrust_correct:  80%|########  | 8/10 [00:08<00:02,  1.18s/it]
+left/crown_thrust_correct:  90%|######### | 9/10 [00:09<00:01,  1.16s/it]
+left/crown_thrust_correct: 100%|##########| 10/10 [00:10<00:00,  1.18s/it]
+  [REJECTED] 1.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 4.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 5.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 6_3 (69).jpg: Low visibility on joint 13 (< 0.5)
+  Accepted: 5/10 (50.0%)
+  Rejected: 5/10
+Processing left/left_chest_thrust_correct: 10 images
+                                                                          
+
+left/left_chest_thrust_correct:   0%|          | 0/10 [00:00<?, ?it/s]
+left/left_chest_thrust_correct:  10%|#         | 1/10 [00:01<00:13,  1.48s/it]
+left/left_chest_thrust_correct:  20%|##        | 2/10 [00:02<00:10,  1.28s/it]
+left/left_chest_thrust_correct:  30%|###       | 3/10 [00:03<00:09,  1.30s/it]
+left/left_chest_thrust_correct:  40%|####      | 4/10 [00:05<00:07,  1.23s/it]
+left/left_chest_thrust_correct:  50%|#####     | 5/10 [00:06<00:06,  1.25s/it]
+left/left_chest_thrust_correct:  60%|######    | 6/10 [00:07<00:04,  1.22s/it]
+left/left_chest_thrust_correct:  70%|#######   | 7/10 [00:08<00:03,  1.20s/it]
+left/left_chest_thrust_correct:  80%|########  | 8/10 [00:10<00:02,  1.27s/it]
+left/left_chest_thrust_correct:  90%|######### | 9/10 [00:11<00:01,  1.28s/it]
+left/left_chest_thrust_correct: 100%|##########| 10/10 [00:12<00:00,  1.28s/it]
+  [REJECTED] 1.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 3.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 5.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 8-3 (37).jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] left chest thrust_11.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 1 (1).png: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 4.png: Low visibility on joint 13 (< 0.5)
+  Accepted: 3/10 (30.0%)
+  Rejected: 7/10
+  WARNING: Low acceptance rate! Expected >50%, got 30.0%
+Processing left/left_elbow_block_correct: 10 images
+                                                                               
+
+left/left_elbow_block_correct:   0%|          | 0/10 [00:00<?, ?it/s]
+left/left_elbow_block_correct:  10%|#         | 1/10 [00:01<00:10,  1.22s/it]
+left/left_elbow_block_correct:  20%|##        | 2/10 [00:02<00:09,  1.22s/it]
+left/left_elbow_block_correct:  30%|###       | 3/10 [00:03<00:08,  1.27s/it]
+left/left_elbow_block_correct:  40%|####      | 4/10 [00:05<00:07,  1.30s/it]
+left/left_elbow_block_correct:  50%|#####     | 5/10 [00:06<00:06,  1.32s/it]
+left/left_elbow_block_correct:  60%|######    | 6/10 [00:07<00:05,  1.37s/it]
+left/left_elbow_block_correct:  70%|#######   | 7/10 [00:09<00:03,  1.32s/it]
+left/left_elbow_block_correct:  80%|########  | 8/10 [00:10<00:02,  1.40s/it]
+left/left_elbow_block_correct:  90%|######### | 9/10 [00:12<00:01,  1.37s/it]
+left/left_elbow_block_correct: 100%|##########| 10/10 [00:13<00:00,  1.25s/it]
+  [REJECTED] 1.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 2.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 3.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 4.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 5.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 8-3 (18).jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 9-3 (26).jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] Left Elbow Block_17(1).jpg: Low visibility on joint 13 (< 0.5)
+  Accepted: 2/10 (20.0%)
+  Rejected: 8/10
+  WARNING: Low acceptance rate! Expected >50%, got 20.0%
+Processing left/left_eye_thrust_correct: 12 images
+                                                                              
+
+left/left_eye_thrust_correct:   0%|          | 0/12 [00:00<?, ?it/s]
+left/left_eye_thrust_correct:   8%|8         | 1/12 [00:01<00:14,  1.28s/it]
+left/left_eye_thrust_correct:  17%|#6        | 2/12 [00:02<00:10,  1.08s/it]
+left/left_eye_thrust_correct:  25%|##5       | 3/12 [00:03<00:08,  1.05it/s]
+left/left_eye_thrust_correct:  33%|###3      | 4/12 [00:04<00:08,  1.06s/it]
+left/left_eye_thrust_correct:  42%|####1     | 5/12 [00:05<00:08,  1.18s/it]
+left/left_eye_thrust_correct:  50%|#####     | 6/12 [00:06<00:07,  1.23s/it]
+left/left_eye_thrust_correct:  58%|#####8    | 7/12 [00:08<00:06,  1.26s/it]
+left/left_eye_thrust_correct:  67%|######6   | 8/12 [00:09<00:04,  1.23s/it]
+left/left_eye_thrust_correct:  75%|#######5  | 9/12 [00:10<00:03,  1.23s/it]
+left/left_eye_thrust_correct:  83%|########3 | 10/12 [00:11<00:02,  1.21s/it]
+left/left_eye_thrust_correct:  92%|#########1| 11/12 [00:13<00:01,  1.22s/it]
+left/left_eye_thrust_correct: 100%|##########| 12/12 [00:14<00:00,  1.16s/it]
+  [REJECTED] 2.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 4.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 5.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 8-3 (64).jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 9-3 (144).jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 1 (1).png: Low visibility on joint 13 (< 0.5)
+  Accepted: 6/12 (50.0%)
+  Rejected: 6/12
+Processing left/left_knee_block_correct: 10 images
+                                                                             
+
+left/left_knee_block_correct:   0%|          | 0/10 [00:00<?, ?it/s]
+left/left_knee_block_correct:  10%|#         | 1/10 [00:01<00:11,  1.24s/it]
+left/left_knee_block_correct:  20%|##        | 2/10 [00:01<00:07,  1.05it/s]
+left/left_knee_block_correct:  30%|###       | 3/10 [00:03<00:07,  1.07s/it]
+left/left_knee_block_correct:  40%|####      | 4/10 [00:04<00:06,  1.15s/it]
+left/left_knee_block_correct:  50%|#####     | 5/10 [00:05<00:06,  1.23s/it]
+left/left_knee_block_correct:  60%|######    | 6/10 [00:07<00:04,  1.22s/it]
+left/left_knee_block_correct:  70%|#######   | 7/10 [00:08<00:03,  1.22s/it]
+left/left_knee_block_correct:  80%|########  | 8/10 [00:09<00:02,  1.27s/it]
+left/left_knee_block_correct:  90%|######### | 9/10 [00:10<00:01,  1.29s/it]
+left/left_knee_block_correct: 100%|##########| 10/10 [00:12<00:00,  1.24s/it]
+  [REJECTED] 2 (1).jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 2.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] 3.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] left knee block_11.jpg: Low visibility on joint 13 (< 0.5)
+  [REJECTED] Left Knee Block_12(1).jpg: Low visibility on joint 13 (< 0.5)
+  Accepted: 5/10 (50.0%)
+  Rejected: 5/10
+Processing left/left_temple_block_correct: 11 images
+                                                                             
+
+left/left_temple_block_correct:   0%|          | 0/11 [00:00<?, ?it/s]
+left/left_temple_block_correct:   9%|9         | 1/11 [00:01<00:10,  1.01s/it]
+left/left_temple_block_correct:  18%|#8        | 2/11 [00:01<00:08,  1.11it/s]
+left/left_temple_block_correct:  27%|##7       | 3/11 [00:03<00:08,  1.05s/it]
+left/left_temple_block_correct:  36%|###6      | 4/11 [00:04<00:07,  1.13s/it]
