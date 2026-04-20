@@ -62,3 +62,21 @@ Report agreement metrics (e.g., Cohen’s Kappa if categorical, ICC if continuou
 If discrepancies exist between the system and expert evaluation, explain:
 Where the model fails
 Limitations in 2D pose estimation versus real-world 3D motion
+
+
+Under results include the ff:
+/1. Actual system detection, both positive and negative results
+/2. Feedback mechanism/Corrective actions with actual system screenshots
+Under post deployment testing, create 3 new images.  left elbow block. show one excellent with comments, one good with comments and one negative result where one joint is covered in ___ viewpoint. use actual ui.
+
+3. Include more of the desktop app (important only)
+You choose Lesson or Free Practice. image 1. The core loop (zoning, countdown, snapshot). image 2. 
+
+Additionally:
+/1. All tables and figures must be cited in the discussion e.g. Table I shows ... Fig. 3 outline the ...
+/2. In methodology, explain thoroughly how the models were built including the Yolo for stick detection
+/3. Include sample dataset collected used for all models
+
+
+
+
