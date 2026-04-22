@@ -162,9 +162,10 @@ class HybridGCN(nn.Module):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         hybrid_features = data.hybrid_features
         
-        # Get node embeddings
-        node_indices = torch.arange(35, device=x.device).unsqueeze(0).expand(x.size(0), -1)
-        node_emb = self.node_embedding(node_indices).view(x.size(0), -1)
+        # Get node embeddings - FIX: Proper batch handling
+        batch_size = batch.max().item() + 1
+        node_indices = torch.arange(35, device=x.device).unsqueeze(0).expand(batch_size, -1)
+        node_emb = self.node_embedding(node_indices).view(-1, NODE_EMBED_DIM)  # [B*35, NODE_EMBED_DIM]
         
         # Concatenate node features with embeddings
         x = torch.cat([x, node_emb], dim=-1)
@@ -185,7 +186,9 @@ class HybridGCN(nn.Module):
         # Global pooling
         x_pool = global_mean_pool(x, batch)
         
-        # Hybrid feature processing
+        # Hybrid feature processing - FIX: Reshape from [B*30] to [B, 30]
+        batch_size = batch.max().item() + 1
+        hybrid_features = hybrid_features.view(batch_size, -1)  # [B, 30]
         hybrid_out = self.hybrid_mlp(hybrid_features)
         
         # Fusion
@@ -210,18 +213,24 @@ class GraphDataset(Dataset):
         self.data = torch.load(features_path, map_location='cpu')
         self.viewpoint = viewpoint
         
-        # Filter by viewpoint if specified
-        if viewpoint:
+        # Check if viewpoints are available in the data
+        has_viewpoints = 'viewpoints' in self.data
+        
+        # Filter by viewpoint if specified and available
+        if viewpoint and has_viewpoints:
             mask = [v == viewpoint for v in self.data['viewpoints']]
             self.node_features = self.data['node_features'][mask]
             self.hybrid_features = self.data['hybrid_features'][mask]
             self.labels = self.data['labels'][mask]
             self.viewpoints = [v for v, m in zip(self.data['viewpoints'], mask) if m]
+        elif viewpoint and not has_viewpoints:
+            raise ValueError(f"Viewpoint filtering requested ({viewpoint}) but 'viewpoints' key not found in {features_path}. "
+                           f"Regenerate features with viewpoint information or run without --viewpoint.")
         else:
             self.node_features = self.data['node_features']
             self.hybrid_features = self.data['hybrid_features']
             self.labels = self.data['labels']
-            self.viewpoints = self.data['viewpoints']
+            self.viewpoints = self.data.get('viewpoints', [None] * len(self.labels))
         
         print(f"Loaded {len(self)} samples" + (f" for {viewpoint} view" if viewpoint else " for all views"))
         
@@ -426,7 +435,7 @@ def train_model(train_dataset, val_dataset, viewpoint=None, merged=False, config
                 nn.init.zeros_(m.bias)
     
     model.apply(init_weights)
-    print("✓ Applied Xavier initialization")
+    print("[OK] Applied Xavier initialization")
     
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
@@ -444,8 +453,7 @@ def train_model(train_dataset, val_dataset, viewpoint=None, merged=False, config
         optimizer,
         mode='max',
         factor=0.5,
-        patience=5,
-        verbose=True
+        patience=5
     )
     
     # Class weights for loss function
@@ -517,13 +525,13 @@ def train_model(train_dataset, val_dataset, viewpoint=None, merged=False, config
                 'train_acc': train_acc,
                 'config': history['config']
             }, best_model_path)
-            print(f"  ✓ Saved best model (val_acc={val_acc:.1f}%)")
+            print(f"  [OK] Saved best model (val_acc={val_acc:.1f}%)")
         else:
             patience_counter += 1
         
         # OPTIMIZED: Early stop on severe overfitting
         if overfit_gap > max_overfit_gap:
-            print(f"  ⚠ Severe overfitting detected (gap={overfit_gap:.1f}%), stopping...")
+            print(f"  [WARN] Severe overfitting detected (gap={overfit_gap:.1f}%), stopping...")
             break
         
         # Standard early stopping
