@@ -1,0 +1,89 @@
+{
+  "_meta": {
+    "updated_at": "2026-04-22T13:42:37.885Z",
+    "version": 2
+  },
+  "entries": {
+    "hybrid_classifier/4c_train_hybrid_gcn_v2.py": {
+      "exports": [
+        "train_model",
+        "HybridGCN",
+        "GraphDataset",
+        "main"
+      ],
+      "imports": [
+        "torch",
+        "torch.nn",
+        "torch.nn.functional",
+        "torch.utils.data",
+        "torch_geometric",
+        "numpy",
+        "tqdm"
+      ],
+      "type": "training-script"
+    },
+    "hybrid_classifier/2b_generate_node_hybrid_features.py": {
+      "exports": [
+        "extract_raw_features",
+        "compute_hybrid_features",
+        "extract_node_features",
+        "process_dataset"
+      ],
+      "imports": [
+        "cv2",
+        "numpy",
+        "mediapipe",
+        "ultralytics",
+        "torch"
+      ],
+      "type": "feature-extraction"
+    },
+    "hybrid_classifier/1_extract_reference_features.py": {
+      "exports": [],
+      "imports": [
+        "cv2",
+        "numpy",
+        "mediapipe",
+        "ultralytics"
+      ],
+      "type": "feature-extraction"
+    },
+    "hybrid_classifier/3_train_classifier.py": {
+      "exports": [],
+      "imports": [
+        "torch",
+        "sklearn"
+      ],
+      "type": "training-script"
+    },
+    "deployment_package/src/model_architecture.py": {
+      "exports": [
+        "HybridGCN",
+        "CLASS_NAMES",
+        "SKELETON_EDGES"
+      ],
+      "imports": [
+        "torch",
+        "torch.nn",
+        "torch.nn.functional",
+        "torch_geometric"
+      ],
+      "type": "model-definition"
+    },
+    "deployment_package/src/feature_extraction.py": {
+      "exports": [
+        "extract_raw_features",
+        "compute_hybrid_features",
+        "extract_node_features",
+        "gaussian_similarity"
+      ],
+      "imports": [
+        "cv2",
+        "numpy",
+        "mediapipe",
+        "ultralytics"
+      ],
+      "type": "feature-extraction"
+    }
+  }
+}

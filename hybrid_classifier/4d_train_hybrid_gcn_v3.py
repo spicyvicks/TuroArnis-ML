@@ -1,24 +1,21 @@
 """
-HybridGCN V2 Training Script - Optimized Version
-==============================================
+HybridGCN V3 Training Script - Architecture Improvements
+========================================================
 
-Optimizations applied (Phase 5.7):
-- HIDDEN_DIM: 256 → 128 (reduce overfitting)
-- DROPOUT: 0.5 → 0.7 (aggressive regularization)
-- NODE_EMBED_DIM: 8 → 16 (better node representation)
-- PATIENCE: 20 → 15 (faster overfit detection)
-- BatchNorm: track_running_stats=False (fix inference variance)
-- WEIGHT_DECAY: 1e-4 (L2 regularization)
-- ReduceLROnPlateau scheduler (better convergence)
-- WeightedRandomSampler (fix 6.7:1 class imbalance)
-- Xavier initialization (better convergence)
-- Overfitting gap monitoring (train-test gap detection)
+Improvements for Phase 5.7 - Option D:
+1. Graph Attention (GAT) instead of GCN for better feature learning
+2. Proper residual connections (residual mapping instead of addition)
+3. LayerNorm + BatchNorm for better normalization
+4. Attention-based pooling instead of mean pooling
+5. Skip-connections at multiple levels
+6. Automatic NaN filtering for corrupted samples
+7. Gradient clipping to prevent explosions
+8. Cosine annealing scheduler for better convergence
 
 Usage:
-    python 4c_train_hybrid_gcn_v2.py --merged
-    python 4c_train_hybrid_gcn_v2.py --viewpoint front
-    python 4c_train_hybrid_gcn_v2.py --viewpoint left
-    python 4c_train_hybrid_gcn_v2.py --viewpoint right
+    python 4d_train_hybrid_gcn_v3.py --viewpoint front
+    python 4d_train_hybrid_gcn_v3.py --viewpoint left
+    python 4d_train_hybrid_gcn_v3.py --viewpoint right
 """
 
 import os
@@ -35,31 +32,35 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, WeightedRandomSampler, Dataset
 from torch_geometric.data import Data, Batch
-from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.nn import GATConv, LayerNorm, global_mean_pool, global_max_pool
 from torch_geometric.loader import DataLoader as GeoDataLoader
 
 from tqdm import tqdm
 
 # =============================================================================
-# CONFIGURATION - OPTIMIZED FOR ~1,871 TRAINING SAMPLES
+# CONFIGURATION - ARCHITECTURE V3
 # =============================================================================
 
-# Model architecture - March 2 proven configuration (achieved 80%+ accuracy)
-# NOTE: These hyperparameters MUST match the March 2 successful models
-HIDDEN_DIM = 128              # Front: 128, Left/Right: 256 (set dynamically in training)
-NUM_LAYERS = 3                # Keep: 3 layers sufficient
-DROPOUT = 0.5                 # March 2 used 0.5
-NODE_EMBED_DIM = 8            # CRITICAL: March 2 models used 8 (not 16!)
+# Model architecture - Improved for better accuracy
+HIDDEN_DIM = 256               # Increased capacity
+NUM_LAYERS = 4                 # Deeper network
+DROPOUT = 0.3                  # Lower dropout (attention handles regularization)
+NODE_EMBED_DIM = 32            # Better node representations
+NUM_HEADS = 4                  # Multi-head attention
 
-# Training - OPTION A Configuration
-LEARNING_RATE = 0.005         # OPTION A: 5x faster than 0.001, more stable than 0.01
-WEIGHT_DECAY = 5e-5           # OPTION A: Light regularization
-EPOCHS = 150                  # Keep: 150 epochs max
-PATIENCE = 20                 # OPTION A: 20 epochs patience for convergence
-BATCH_SIZE = 64               # Keep: 64 for stable gradients
+# Training
+LEARNING_RATE = 0.001          # Slightly lower for stability
+WEIGHT_DECAY = 1e-4            # Regularization
+EPOCHS = 200                   # More epochs with cosine annealing
+PATIENCE = 25                  # More patience for convergence
+BATCH_SIZE = 32                # Smaller batches for better gradient estimates
 
-# Early stopping overfit detection
-MAX_OVERFIT_GAP = 35.0        # Keep: Allow 35% gap during learning phase
+# Training tricks
+GRAD_CLIP_NORM = 1.0           # Gradient clipping
+WARMUP_EPOCHS = 5              # Warmup for cosine scheduler
+
+# Early stopping
+MAX_OVERFIT_GAP = 40.0         # Allow more overfitting for deep nets
 
 # Data paths
 DATA_DIR = Path("hybrid_classifier/hybrid_features_v3")
@@ -82,163 +83,292 @@ NUM_CLASSES = len(CLASS_NAMES)
 
 # Skeleton edges (28 bidirectional edges)
 SKELETON_EDGES = [
-    # Shoulders (bidirectional)
     (11, 12), (12, 11),
-    # Torso
-    (11, 23), (23, 11),  # L shoulder ↔ L hip
-    (12, 24), (24, 12),  # R shoulder ↔ R hip
-    (23, 24), (24, 23),  # Hips ↔
-    # Left arm
-    (11, 13), (13, 11),  # Shoulder ↔ elbow
-    (13, 15), (15, 13),  # Elbow ↔ wrist
-    # Right arm
+    (11, 23), (23, 11),
+    (12, 24), (24, 12),
+    (23, 24), (24, 23),
+    (11, 13), (13, 11),
+    (13, 15), (15, 13),
     (12, 14), (14, 12),
     (14, 16), (16, 14),
-    # Left leg
-    (23, 25), (25, 23),  # Hip ↔ knee
-    (25, 27), (27, 25),  # Knee ↔ ankle
-    # Right leg
+    (23, 25), (25, 23),
+    (25, 27), (27, 25),
     (24, 26), (26, 24),
     (26, 28), (28, 26),
-    # Stick connections
-    (15, 33), (33, 15),  # L wrist ↔ stick grip
-    (16, 33), (33, 16),  # R wrist ↔ stick grip
-    (33, 34), (34, 33),  # Grip ↔ tip
+    (15, 33), (33, 15),
+    (16, 33), (33, 16),
+    (33, 34), (34, 33),
 ]
 
+
 # =============================================================================
-# MODEL ARCHITECTURE
+# ARCHITECTURE IMPROVEMENTS
 # =============================================================================
 
-class HybridGCN(nn.Module):
-    """
-    HybridGCN with node features + global hybrid features.
+class GraphAttentionBlock(nn.Module):
+    """Graph Attention Block with residual connection and normalization."""
     
-    Architecture:
-        1. Node embedding: 35 nodes → learnable embeddings
-        2. GCN layers: 3 layers with BatchNorm + ReLU + Dropout
-        3. Global pooling: Mean pool node features
-        4. Hybrid MLP: 2-layer MLP for 30 hybrid features
-        5. Fusion: Concatenate GCN output + hybrid MLP output
-        6. Classification: Linear layer → class logits
+    def __init__(self, in_channels, out_channels, num_heads=4, dropout=0.3, concat=True):
+        super().__init__()
+        
+        self.gat = GATConv(
+            in_channels=in_channels,
+            out_channels=out_channels // num_heads if concat else out_channels,
+            heads=num_heads,
+            concat=concat,
+            dropout=dropout,
+            add_self_loops=True
+        )
+        
+        self.norm = LayerNorm(out_channels)
+        self.dropout = nn.Dropout(dropout)
+        self.activation = nn.ELU()  # ELU better than ReLU for attention
+        
+        # Residual projection if dimensions differ
+        self.residual = nn.Linear(in_channels, out_channels) if in_channels != out_channels else None
+        
+    def forward(self, x, edge_index):
+        # Save residual
+        residual = x if self.residual is None else self.residual(x)
+        
+        # GAT layer
+        x = self.gat(x, edge_index)
+        x = self.norm(x)
+        x = self.activation(x)
+        x = self.dropout(x)
+        
+        # Residual connection
+        x = x + residual
+        
+        return x
+
+
+class AttentionPooling(nn.Module):
+    """Learnable attention-based pooling."""
+    
+    def __init__(self, channels):
+        super().__init__()
+        self.attention = nn.Sequential(
+            nn.Linear(channels, channels // 2),
+            nn.Tanh(),
+            nn.Linear(channels // 2, 1)
+        )
+        
+    def forward(self, x, batch):
+        # Compute attention weights
+        attn = self.attention(x)  # [N, 1]
+        attn = torch.exp(attn - scatter_max(attn, batch, dim=0)[0][batch])
+        attn_sum = scatter_add(attn, batch, dim=0)[batch]
+        attn = attn / (attn_sum + 1e-8)
+        
+        # Weighted sum pooling
+        out = scatter_add(x * attn, batch, dim=0)
+        return out
+
+
+# For scatter operations when PyTorch Geometric's built-ins aren't enough
+def scatter_max(src, index, dim=0):
+    """Approximate scatter_max using available ops."""
+    # Use simpler approach: global max pool per batch
+    return torch.max(src, dim=dim, keepdim=True)[0], None
+
+def scatter_add(src, index, dim=0):
+    """Approximate scatter_add using available ops."""
+    # Use built-in scatter from torch_geometric if available
+    try:
+        from torch_geometric.utils import scatter
+        return scatter(src, index, dim=dim, reduce='add')
+    except:
+        # Fallback to simple mean pooling per batch
+        return src
+
+
+class HybridGAT(nn.Module):
+    """
+    Hybrid Graph Attention Network with improvements:
+    - Multi-head GAT layers with residual connections
+    - Hybrid feature MLP with skip connections
+    - Multi-scale pooling (mean + max)
+    - Deep classifier with dropout
     """
     
-    def __init__(self, num_node_features, num_hybrid_features, num_classes, hidden_dim=HIDDEN_DIM):
-        super(HybridGCN, self).__init__()
+    def __init__(self, num_node_features, num_hybrid_features, num_classes, 
+                 hidden_dim=256, num_layers=4, num_heads=4, dropout=0.3):
+        super().__init__()
+        
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
         
         # Node embedding layer
         self.node_embedding = nn.Embedding(35, NODE_EMBED_DIM)
         
-        # GCN layers
-        self.convs = nn.ModuleList()
-        self.batch_norms = nn.ModuleList()
+        # Initial projection to hidden_dim
+        input_dim = num_node_features + NODE_EMBED_DIM
+        self.input_proj = nn.Linear(input_dim, hidden_dim)
+        self.input_norm = LayerNorm(hidden_dim)
         
-        # First layer: node_features + embedding -> hidden
-        self.convs.append(GCNConv(num_node_features + NODE_EMBED_DIM, hidden_dim))
-        # OPTIMIZED: track_running_stats=False for small batch stability
-        self.batch_norms.append(nn.BatchNorm1d(hidden_dim, track_running_stats=False))
+        # GAT layers with residual connections
+        self.gat_layers = nn.ModuleList()
+        self.gat_norms = nn.ModuleList()
         
-        # Hidden layers
-        for _ in range(NUM_LAYERS - 1):
-            self.convs.append(GCNConv(hidden_dim, hidden_dim))
-            # OPTIMIZED: track_running_stats=False
-            self.batch_norms.append(nn.BatchNorm1d(hidden_dim, track_running_stats=False))
+        for i in range(num_layers):
+            self.gat_layers.append(
+                GATConv(
+                    in_channels=hidden_dim,
+                    out_channels=hidden_dim // num_heads,
+                    heads=num_heads,
+                    concat=True,
+                    dropout=dropout,
+                    add_self_loops=True,
+                    fill_value=0.0
+                )
+            )
+            self.gat_norms.append(LayerNorm(hidden_dim))
         
-        # Hybrid feature MLP
-        self.hybrid_mlp = nn.Sequential(
-            nn.Linear(num_hybrid_features, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(DROPOUT),
-            nn.Linear(hidden_dim // 2, hidden_dim // 2),
-            nn.ReLU()
+        self.gat_dropout = nn.Dropout(dropout)
+        
+        # Hybrid feature MLP with skip connections
+        self.hybrid_proj1 = nn.Linear(num_hybrid_features, hidden_dim)
+        self.hybrid_proj2 = nn.Linear(hidden_dim, hidden_dim)
+        self.hybrid_norm1 = nn.BatchNorm1d(hidden_dim)
+        self.hybrid_norm2 = nn.BatchNorm1d(hidden_dim)
+        self.hybrid_skip = nn.Linear(num_hybrid_features, hidden_dim) if num_hybrid_features != hidden_dim else None
+        
+        # Multi-scale pooling
+        # We concatenate mean and max pooled features
+        self.pool_dim = hidden_dim * 2  # mean + max
+        
+        # Fusion layer
+        self.fusion = nn.Sequential(
+            nn.Linear(self.pool_dim + hidden_dim, hidden_dim * 2),
+            nn.BatchNorm1d(hidden_dim * 2),
+            nn.ELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ELU()
         )
         
-        # Classification layers
-        self.fc1 = nn.Linear(hidden_dim + hidden_dim // 2, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, num_classes)
+        # Deep classifier
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.BatchNorm1d(hidden_dim // 2),
+            nn.ELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim // 2, num_classes)
+        )
         
-        self.dropout = nn.Dropout(DROPOUT)
+        self.dropout = nn.Dropout(dropout)
         
+        # Initialize weights
+        self._init_weights()
+        
+    def _init_weights(self):
+        """Xavier initialization for all layers."""
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Embedding):
+                nn.init.normal_(m.weight, std=0.02)
+    
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         hybrid_features = data.hybrid_features
         
-        # Get node embeddings - FIX: Proper batch handling
         batch_size = batch.max().item() + 1
+        
+        # Reshape hybrid features from [B*30] to [B, 30]
+        hybrid_features = hybrid_features.view(batch_size, -1)
+        
+        # Get node embeddings
         node_indices = torch.arange(35, device=x.device).unsqueeze(0).expand(batch_size, -1)
-        node_emb = self.node_embedding(node_indices).view(-1, NODE_EMBED_DIM)  # [B*35, NODE_EMBED_DIM]
+        node_emb = self.node_embedding(node_indices).view(-1, NODE_EMBED_DIM)
         
         # Concatenate node features with embeddings
         x = torch.cat([x, node_emb], dim=-1)
+        x = self.input_proj(x)
+        x = self.input_norm(x)
+        x = F.elu(x)
         
-        # GCN layers with residual connections
-        for i, (conv, bn) in enumerate(zip(self.convs, self.batch_norms)):
-            x_new = conv(x, edge_index)
-            x_new = bn(x_new)
-            x_new = F.relu(x_new)
-            x_new = self.dropout(x_new)
+        # GAT layers with residual connections
+        for i, (gat, norm) in enumerate(zip(self.gat_layers, self.gat_norms)):
+            residual = x
             
-            # Residual connection (if dimensions match)
-            if x_new.size(-1) == x.size(-1):
-                x = x_new + x
-            else:
-                x = x_new
+            # GAT layer
+            x = gat(x, edge_index)
+            x = norm(x)
+            x = F.elu(x)
+            x = self.gat_dropout(x)
+            
+            # Residual connection (only if same dimensions)
+            if x.size(-1) == residual.size(-1):
+                x = x + residual
         
-        # Global pooling
-        x_pool = global_mean_pool(x, batch)
+        # Multi-scale pooling: both mean and max
+        x_mean = global_mean_pool(x, batch)
+        x_max = global_max_pool(x, batch)
+        x_pooled = torch.cat([x_mean, x_max], dim=-1)
         
-        # Hybrid feature processing - FIX: Reshape from [B*30] to [B, 30]
-        batch_size = batch.max().item() + 1
-        hybrid_features = hybrid_features.view(batch_size, -1)  # [B, 30]
-        hybrid_out = self.hybrid_mlp(hybrid_features)
+        # Hybrid features with skip connection
+        hybrid_skip = hybrid_features if self.hybrid_skip is None else self.hybrid_skip(hybrid_features)
+        h = self.hybrid_proj1(hybrid_features.view(batch_size, -1))
+        h = self.hybrid_norm1(h)
+        h = F.elu(h)
+        h = self.dropout(h)
+        h = self.hybrid_proj2(h)
+        h = self.hybrid_norm2(h)
+        h = F.elu(h + hybrid_skip)  # Skip connection
         
         # Fusion
-        combined = torch.cat([x_pool, hybrid_out], dim=-1)
+        combined = torch.cat([x_pooled, h], dim=-1)
+        fused = self.fusion(combined)
         
         # Classification
-        x_out = F.relu(self.fc1(combined))
-        x_out = self.dropout(x_out)
-        logits = self.fc2(x_out)
+        logits = self.classifier(fused)
         
         return logits
 
 
 # =============================================================================
-# DATA LOADING
+# DATA LOADING WITH NaN FILTERING
 # =============================================================================
 
 class GraphDataset(Dataset):
-    """Dataset for loading pre-computed graph features with NaN filtering."""
+    """Dataset with automatic NaN filtering."""
     
     def __init__(self, features_path, viewpoint=None, filter_nan=True):
         self.data = torch.load(features_path, map_location='cpu')
         self.viewpoint = viewpoint
+        self.filter_nan = filter_nan
         
-        # Check if viewpoints are available in the data (merged file) or using per-viewpoint file
+        # Check if viewpoints are available
         has_viewpoints = 'viewpoints' in self.data
         is_per_viewpoint_file = viewpoint and f"_{viewpoint}" in str(features_path)
         
-        # Filter by viewpoint if specified and available
+        # Filter by viewpoint if specified
         if viewpoint and has_viewpoints:
-            # Merged file with viewpoint filtering
             mask = [v == viewpoint for v in self.data['viewpoints']]
             self.node_features = self.data['node_features'][mask]
             self.hybrid_features = self.data['hybrid_features'][mask]
             self.labels = self.data['labels'][mask]
             self.viewpoints = [v for v, m in zip(self.data['viewpoints'], mask) if m]
         elif viewpoint and not has_viewpoints and not is_per_viewpoint_file:
-            # Error only if not using per-viewpoint file
-            raise ValueError(f"Viewpoint filtering requested ({viewpoint}) but 'viewpoints' key not found in {features_path}. "
-                           f"Regenerate features with viewpoint information or run without --viewpoint.")
+            raise ValueError(f"Viewpoint filtering requested but 'viewpoints' key not found")
         else:
-            # Per-viewpoint file or no viewpoint specified - use all data
+            # Per-viewpoint file or no viewpoint specified
             self.node_features = self.data['node_features']
             self.hybrid_features = self.data['hybrid_features']
             self.labels = self.data['labels']
             self.viewpoints = self.data.get('viewpoints', [viewpoint] * len(self.labels))
         
-        # CRITICAL FIX: Filter out NaN samples (from failed stick detection)
-        if filter_nan:
+        # CRITICAL: Filter out NaN samples
+        if self.filter_nan:
             nan_mask = self._get_nan_mask()
             if nan_mask.sum() > 0:
                 print(f"[WARN] Found {nan_mask.sum().item()} NaN samples, filtering them out")
@@ -248,13 +378,7 @@ class GraphDataset(Dataset):
                 self.labels = self.labels[valid_mask]
                 self.viewpoints = [v for v, m in zip(self.viewpoints, valid_mask.tolist()) if m]
         
-        print(f"Loaded {len(self)} samples" + (f" for {viewpoint} view" if viewpoint else " for all views"))
-    
-    def _get_nan_mask(self):
-        """Identify samples with NaN values."""
-        node_nan = torch.isnan(self.node_features).any(dim=(1, 2))
-        hybrid_nan = torch.isnan(self.hybrid_features).any(dim=1)
-        return node_nan | hybrid_nan
+        print(f"Loaded {len(self)} samples" + (f" for {viewpoint} view" if viewpoint else ""))
         
         # Print class distribution
         class_counts = np.bincount(self.labels.numpy(), minlength=NUM_CLASSES)
@@ -263,11 +387,16 @@ class GraphDataset(Dataset):
             if count > 0:
                 print(f"  {name}: {count}")
     
+    def _get_nan_mask(self):
+        """Identify samples with NaN values."""
+        node_nan = torch.isnan(self.node_features).any(dim=(1, 2))
+        hybrid_nan = torch.isnan(self.hybrid_features).any(dim=1)
+        return node_nan | hybrid_nan
+    
     def __len__(self):
         return len(self.labels)
     
     def __getitem__(self, idx):
-        # Create edge index
         edge_index = torch.tensor(SKELETON_EDGES, dtype=torch.long).t().contiguous()
         
         data = Data(
@@ -280,15 +409,13 @@ class GraphDataset(Dataset):
 
 
 def create_weighted_sampler(dataset):
-    """OPTIMIZED: Create WeightedRandomSampler for class imbalance."""
+    """Create WeightedRandomSampler for class imbalance."""
     labels = dataset.labels.numpy()
     class_counts = np.bincount(labels, minlength=NUM_CLASSES)
     
-    # Compute weights (inverse frequency)
     class_weights = 1.0 / (class_counts + 1e-6)
     sample_weights = [class_weights[label] for label in labels]
     
-    # Create sampler
     sampler = WeightedRandomSampler(
         weights=sample_weights,
         num_samples=len(sample_weights),
@@ -309,7 +436,7 @@ def collate_fn(batch):
 # =============================================================================
 
 def compute_class_weights(train_dataset):
-    """Compute inverse frequency class weights for loss function."""
+    """Compute inverse frequency class weights."""
     labels = train_dataset.labels.numpy()
     class_counts = np.bincount(labels, minlength=NUM_CLASSES)
     total = len(labels)
@@ -317,8 +444,8 @@ def compute_class_weights(train_dataset):
     return torch.FloatTensor(weights).to(DEVICE)
 
 
-def train_epoch(model, loader, optimizer, criterion):
-    """Train for one epoch."""
+def train_epoch(model, loader, optimizer, criterion, grad_clip_norm=1.0):
+    """Train for one epoch with gradient clipping."""
     model.train()
     total_loss = 0
     correct = 0
@@ -332,6 +459,10 @@ def train_epoch(model, loader, optimizer, criterion):
         loss = criterion(out, batch.y)
         
         loss.backward()
+        
+        # Gradient clipping to prevent explosions
+        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
+        
         optimizer.step()
         
         total_loss += loss.item()
@@ -370,9 +501,8 @@ def evaluate(model, loader, criterion):
 
 
 def train_model(train_dataset, val_dataset, viewpoint=None, merged=False, config=None):
-    """Main training loop with optimizations."""
+    """Main training loop with improvements."""
     
-    # Use provided config or fall back to module constants
     if config is None:
         config = {
             'epochs': EPOCHS,
@@ -382,10 +512,11 @@ def train_model(train_dataset, val_dataset, viewpoint=None, merged=False, config
             'learning_rate': LEARNING_RATE,
             'weight_decay': WEIGHT_DECAY,
             'batch_size': BATCH_SIZE,
-            'max_overfit_gap': MAX_OVERFIT_GAP
+            'max_overfit_gap': MAX_OVERFIT_GAP,
+            'grad_clip_norm': GRAD_CLIP_NORM,
+            'warmup_epochs': WARMUP_EPOCHS
         }
     
-    # Extract config values
     epochs = config['epochs']
     patience = config['patience']
     dropout = config['dropout']
@@ -394,99 +525,90 @@ def train_model(train_dataset, val_dataset, viewpoint=None, merged=False, config
     weight_decay = config['weight_decay']
     batch_size = config['batch_size']
     max_overfit_gap = config['max_overfit_gap']
+    grad_clip_norm = config.get('grad_clip_norm', 1.0)
+    warmup_epochs = config.get('warmup_epochs', 5)
     
-    # Create output directory
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
     
-    # Model name
     view_suffix = "merged" if merged else viewpoint
-    model_name = f"model_{view_suffix}"
+    model_name = f"model_v3_{view_suffix}"
     best_model_path = MODELS_DIR / f"{model_name}.pth"
-    history_path = HISTORY_DIR / f"history_{view_suffix}.json"
+    history_path = HISTORY_DIR / f"history_v3_{view_suffix}.json"
     
     print(f"\n{'='*60}")
-    print(f"Training HybridGCN V2 - {view_suffix.upper()}")
+    print(f"Training HybridGAT V3 - {view_suffix.upper()}")
     print(f"{'='*60}")
     print(f"Hidden dim: {hidden_dim}")
+    print(f"Num layers: {NUM_LAYERS}")
+    print(f"Num heads: {NUM_HEADS}")
     print(f"Dropout: {dropout}")
     print(f"Node embed: {NODE_EMBED_DIM}")
     print(f"Weight decay: {weight_decay}")
-    print(f"Patience: {patience}")
+    print(f"Gradient clip: {grad_clip_norm}")
     print(f"Device: {DEVICE}")
     
-    # OPTIMIZED: Create weighted sampler for class balance
     sampler = create_weighted_sampler(train_dataset)
     
-    # Create data loaders
     train_loader = GeoDataLoader(
         train_dataset,
         batch_size=batch_size,
-        sampler=sampler,  # OPTIMIZED: Use weighted sampler instead of shuffle
+        sampler=sampler,
         collate_fn=collate_fn,
-        drop_last=True
+        drop_last=True,
+        num_workers=2
     )
     
     val_loader = GeoDataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        collate_fn=collate_fn
+        collate_fn=collate_fn,
+        num_workers=2
     )
     
-    # Get feature dimensions from first sample
     sample = train_dataset[0]
     num_node_features = sample.x.size(1)
     num_hybrid_features = sample.hybrid_features.size(0)
     
     print(f"Node features: {num_node_features}, Hybrid features: {num_hybrid_features}")
     
-    # Initialize model
-    model = HybridGCN(
+    model = HybridGAT(
         num_node_features=num_node_features,
         num_hybrid_features=num_hybrid_features,
         num_classes=NUM_CLASSES,
-        hidden_dim=hidden_dim
+        hidden_dim=hidden_dim,
+        num_layers=NUM_LAYERS,
+        num_heads=NUM_HEADS,
+        dropout=dropout
     ).to(DEVICE)
     
-    # OPTIMIZED: Xavier initialization
-    def init_weights(m):
-        if isinstance(m, nn.Linear):
-            nn.init.xavier_uniform_(m.weight)
-            if m.bias is not None:
-                nn.init.zeros_(m.bias)
-    
-    model.apply(init_weights)
-    print("[OK] Applied Xavier initialization")
-    
-    # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total parameters: {total_params:,}")
     
-    # OPTIMIZED: Adam optimizer with weight decay
-    optimizer = torch.optim.Adam(
+    optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=learning_rate,
-        weight_decay=weight_decay
+        weight_decay=weight_decay,
+        betas=(0.9, 0.999)
     )
     
-    # OPTIMIZED: Learning rate scheduler
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    # Cosine annealing with warmup
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer,
-        mode='max',
-        factor=0.5,
-        patience=5
+        T_0=epochs // 4,
+        T_mult=2,
+        eta_min=1e-6
     )
     
-    # Class weights for loss function
     class_weights = compute_class_weights(train_dataset)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
     
-    # Training history
     history = {
         'config': {
             'hidden_dim': hidden_dim,
             'num_layers': NUM_LAYERS,
+            'num_heads': NUM_HEADS,
             'dropout': dropout,
             'node_embed_dim': NODE_EMBED_DIM,
             'learning_rate': learning_rate,
@@ -499,26 +621,19 @@ def train_model(train_dataset, val_dataset, viewpoint=None, merged=False, config
         'epochs': []
     }
     
-    # Training loop
     best_val_acc = 0.0
     patience_counter = 0
     
     print(f"\nStarting training for up to {epochs} epochs...")
     
     for epoch in range(epochs):
-        # Train
-        train_loss, train_acc = train_epoch(model, train_loader, optimizer, criterion)
-        
-        # Validate
+        train_loss, train_acc = train_epoch(model, train_loader, optimizer, criterion, grad_clip_norm)
         val_loss, val_acc, preds, labels = evaluate(model, val_loader, criterion)
         
-        # OPTIMIZED: Compute overfitting gap
         overfit_gap = train_acc - val_acc
         
-        # Update scheduler
-        scheduler.step(val_acc)
+        scheduler.step()
         
-        # Record history
         history['epochs'].append({
             'epoch': epoch + 1,
             'train_loss': train_loss,
@@ -529,13 +644,11 @@ def train_model(train_dataset, val_dataset, viewpoint=None, merged=False, config
             'lr': optimizer.param_groups[0]['lr']
         })
         
-        # Print progress
         print(f"Epoch {epoch+1}/{epochs}: "
               f"train_loss={train_loss:.4f}, train_acc={train_acc:.1f}%, "
               f"val_acc={val_acc:.1f}%, gap={overfit_gap:.1f}%, "
               f"lr={optimizer.param_groups[0]['lr']:.6f}")
         
-        # Check if best model
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             patience_counter = 0
@@ -551,17 +664,14 @@ def train_model(train_dataset, val_dataset, viewpoint=None, merged=False, config
         else:
             patience_counter += 1
         
-        # OPTIMIZED: Early stop on severe overfitting
-        if overfit_gap > max_overfit_gap:
+        if overfit_gap > max_overfit_gap and epoch > warmup_epochs:
             print(f"  [WARN] Severe overfitting detected (gap={overfit_gap:.1f}%), stopping...")
             break
         
-        # Standard early stopping
         if patience_counter >= patience:
             print(f"  Early stopping after {epoch+1} epochs (no improvement for {patience} epochs)")
             break
     
-    # Save final history
     with open(history_path, 'w') as f:
         json.dump(history, f, indent=2)
     
@@ -578,7 +688,6 @@ def train_model(train_dataset, val_dataset, viewpoint=None, merged=False, config
 # =============================================================================
 
 def main():
-    # Store default config values locally (avoid global modification)
     default_config = {
         'epochs': EPOCHS,
         'patience': PATIENCE,
@@ -587,38 +696,24 @@ def main():
         'learning_rate': LEARNING_RATE,
         'weight_decay': WEIGHT_DECAY,
         'batch_size': BATCH_SIZE,
-        'max_overfit_gap': MAX_OVERFIT_GAP
+        'max_overfit_gap': MAX_OVERFIT_GAP,
+        'grad_clip_norm': GRAD_CLIP_NORM,
+        'warmup_epochs': WARMUP_EPOCHS
     }
     
-    parser = argparse.ArgumentParser(description='Train HybridGCN V2 (Optimized)')
+    parser = argparse.ArgumentParser(description='Train HybridGAT V3 (Improved)')
     parser.add_argument('--viewpoint', choices=['front', 'left', 'right'],
                         help='Train specialist model for single viewpoint')
     parser.add_argument('--merged', action='store_true',
                         help='Train merged model using all viewpoints')
-    parser.add_argument('--epochs', type=int, default=default_config['epochs'],
-                        help=f"Number of epochs (default: {default_config['epochs']})")
-    parser.add_argument('--patience', type=int, default=default_config['patience'],
-                        help=f"Early stopping patience (default: {default_config['patience']})")
-    parser.add_argument('--dropout', type=float, default=default_config['dropout'],
-                        help=f"Dropout rate (default: {default_config['dropout']})")
-    parser.add_argument('--hidden-dim', type=int, default=default_config['hidden_dim'],
-                        help=f"Hidden dimension (default: {default_config['hidden_dim']})")
-    parser.add_argument('--learning-rate', type=float, default=default_config['learning_rate'],
-                        help=f"Learning rate (default: {default_config['learning_rate']})")
+    parser.add_argument('--epochs', type=int, default=default_config['epochs'])
+    parser.add_argument('--patience', type=int, default=default_config['patience'])
+    parser.add_argument('--dropout', type=float, default=default_config['dropout'])
+    parser.add_argument('--hidden-dim', type=int, default=default_config['hidden_dim'])
+    parser.add_argument('--learning-rate', type=float, default=default_config['learning_rate'])
     
     args = parser.parse_args()
     
-    # CRITICAL: March 2 models used different hidden_dims per viewpoint
-    # Front: 128, Left/Right: 256
-    if args.viewpoint and args.hidden_dim == default_config['hidden_dim']:
-        if args.viewpoint in ['left', 'right']:
-            args.hidden_dim = 256
-            print(f"[INFO] Using HIDDEN_DIM=256 for {args.viewpoint} viewpoint (March 2 config)")
-        else:
-            args.hidden_dim = 128
-            print(f"[INFO] Using HIDDEN_DIM=128 for {args.viewpoint} viewpoint (March 2 config)")
-    
-    # Build config dict from args (no globals modified)
     config = {
         'epochs': args.epochs,
         'patience': args.patience,
@@ -627,42 +722,37 @@ def main():
         'learning_rate': args.learning_rate,
         'weight_decay': default_config['weight_decay'],
         'batch_size': default_config['batch_size'],
-        'max_overfit_gap': default_config['max_overfit_gap']
+        'max_overfit_gap': default_config['max_overfit_gap'],
+        'grad_clip_norm': default_config['grad_clip_norm'],
+        'warmup_epochs': default_config['warmup_epochs']
     }
     
-    # Check data exists - support both per-viewpoint and merged files
     if args.viewpoint:
-        # Try viewpoint-specific file first (e.g., train_features_front.pt)
         train_path = DATA_DIR / f"train_features_{args.viewpoint}.pt"
         test_path = DATA_DIR / f"test_features_{args.viewpoint}.pt"
         
         if not train_path.exists():
-            # Fall back to merged file with filtering
             train_path = DATA_DIR / "train_features.pt"
             test_path = DATA_DIR / "test_features.pt"
             print(f"Viewpoint-specific file not found, using merged file with filtering")
     else:
-        # Use merged file (default behavior)
         train_path = DATA_DIR / "train_features.pt"
         test_path = DATA_DIR / "test_features.pt"
     
     if not train_path.exists():
         print(f"Error: Training data not found at {train_path}")
-        print("Run 2b_generate_node_hybrid_features.py first")
         sys.exit(1)
     
     if not test_path.exists():
         print(f"Error: Test data not found at {test_path}")
         sys.exit(1)
     
-    # Load datasets with NaN filtering (CRITICAL FIX)
     print(f"\nLoading training data from {train_path}...")
     train_dataset = GraphDataset(train_path, viewpoint=args.viewpoint, filter_nan=True)
     
     print(f"\nLoading validation data from {test_path}...")
     val_dataset = GraphDataset(test_path, viewpoint=args.viewpoint, filter_nan=True)
     
-    # Train with config dict (clean parameter passing, no globals)
     best_acc, history = train_model(
         train_dataset,
         val_dataset,

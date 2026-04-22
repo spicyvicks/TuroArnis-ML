@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "updated_at": "2026-04-22T13:42:37.362Z",
+    "version": 2
+  },
+  "languages": [
+    "Python"
+  ],
+  "frameworks": [
+    "PyTorch 2.10.0",
+    "PyTorch Geometric 2.4.0",
+    "MediaPipe 0.10.14",
+    "Ultralytics YOLO 8.3.252",
+    "OpenCV 4.13.0"
+  ],
+  "tools": [
+    "Git",
+    "NumPy 1.26.4",
+    "tqdm",
+    "matplotlib",
+    "PyQt6 6.8.0",
+    "PyInstaller 6.12.0"
+  ],
+  "build_system": "Python scripts",
+  "test_framework": "Manual evaluation scripts",
+  "package_manager": "pip",
+  "content_formats": [
+    "Python scripts (.py)",
+    "JSON (feature templates, evaluation results, configs)",
+    "Markdown (documentation)"
+  ]
+}

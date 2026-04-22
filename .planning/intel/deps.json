@@ -1,0 +1,70 @@
+{
+  "_meta": {
+    "updated_at": "2026-04-22T13:42:38.434Z",
+    "version": 2
+  },
+  "entries": {
+    "torch": {
+      "version": "2.10.0+cpu",
+      "type": "production",
+      "used_by": [
+        "hybrid_classifier/4c_train_hybrid_gcn_v2.py",
+        "deployment_package/src/model_architecture.py"
+      ],
+      "invocation": "import torch"
+    },
+    "torch-geometric": {
+      "version": "2.4.0",
+      "type": "production",
+      "used_by": [
+        "hybrid_classifier/4c_train_hybrid_gcn_v2.py",
+        "deployment_package/src/model_architecture.py"
+      ],
+      "invocation": "from torch_geometric.nn import GCNConv"
+    },
+    "mediapipe": {
+      "version": "0.10.14",
+      "type": "production",
+      "used_by": [
+        "hybrid_classifier/2b_generate_node_hybrid_features.py",
+        "deployment_package/src/feature_extraction.py"
+      ],
+      "invocation": "mp.solutions.pose"
+    },
+    "ultralytics": {
+      "version": "8.3.252",
+      "type": "production",
+      "used_by": [
+        "hybrid_classifier/2b_generate_node_hybrid_features.py",
+        "deployment_package/src/feature_extraction.py"
+      ],
+      "invocation": "YOLO()"
+    },
+    "opencv-python": {
+      "version": "4.13.0.92",
+      "type": "production",
+      "used_by": [
+        "hybrid_classifier/2b_generate_node_hybrid_features.py",
+        "deployment_package/src/feature_extraction.py"
+      ],
+      "invocation": "cv2.imread()"
+    },
+    "numpy": {
+      "version": "1.26.4",
+      "type": "production",
+      "used_by": [
+        "hybrid_classifier/",
+        "deployment_package/"
+      ],
+      "invocation": "import numpy as np"
+    },
+    "tqdm": {
+      "version": "implicit",
+      "type": "production",
+      "used_by": [
+        "hybrid_classifier/4c_train_hybrid_gcn_v2.py"
+      ],
+      "invocation": "from tqdm import tqdm"
+    }
+  }
+}
