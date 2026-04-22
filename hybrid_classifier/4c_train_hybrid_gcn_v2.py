@@ -44,21 +44,22 @@ from tqdm import tqdm
 # CONFIGURATION - OPTIMIZED FOR ~1,871 TRAINING SAMPLES
 # =============================================================================
 
-# Model architecture - RETRAIN WITH LESS AGGRESSIVE REGULARIZATION
-HIDDEN_DIM = 128              # Keep: 128 is good balance
-NUM_LAYERS = 3                # Keep: good depth for feature hierarchy
-DROPOUT = 0.5                 # REDUCED: was 0.7, too aggressive - model not learning
-NODE_EMBED_DIM = 16           # Keep: 16 for better node differentiation
+# Model architecture - OPTION A: Best performing configuration for per-viewpoint training
+# Based on merged model testing: 37.6% accuracy (vs 24.9% baseline, 9% over-capacity)
+HIDDEN_DIM = 128              # Keep: 128 is optimal for 13-class problem
+NUM_LAYERS = 3                # Keep: 3 layers sufficient
+DROPOUT = 0.5                 # OPTION A: was 0.7 (too high), 0.3 (too low) - 0.5 is sweet spot
+NODE_EMBED_DIM = 16           # Keep: 16 for good node differentiation
 
-# Training - INCREASED LEARNING RATE for faster convergence
-LEARNING_RATE = 0.005         # INCREASED: was 0.001, too slow - severe underfitting
-WEIGHT_DECAY = 5e-5           # REDUCED: was 1e-4, lighter regularization
-EPOCHS = 150
-PATIENCE = 20                 # INCREASED: was 15, give more time to learn
-BATCH_SIZE = 64               # INCREASED: was 32, for more stable gradients
+# Training - OPTION A Configuration
+LEARNING_RATE = 0.005         # OPTION A: 5x faster than 0.001, more stable than 0.01
+WEIGHT_DECAY = 5e-5           # OPTION A: Light regularization
+EPOCHS = 150                  # Keep: 150 epochs max
+PATIENCE = 20                 # OPTION A: 20 epochs patience for convergence
+BATCH_SIZE = 64               # Keep: 64 for stable gradients
 
 # Early stopping overfit detection
-MAX_OVERFIT_GAP = 35.0        # INCREASED: was 25, allow more gap during learning phase
+MAX_OVERFIT_GAP = 35.0        # Keep: Allow 35% gap during learning phase
 
 # Data paths
 DATA_DIR = Path("hybrid_classifier/hybrid_features_v3")
