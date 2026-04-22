@@ -44,21 +44,21 @@ from tqdm import tqdm
 # CONFIGURATION - OPTIMIZED FOR ~1,871 TRAINING SAMPLES
 # =============================================================================
 
-# Model architecture
-HIDDEN_DIM = 128              # REDUCED: was 256, prevents overfitting
+# Model architecture - RETRAIN WITH LESS AGGRESSIVE REGULARIZATION
+HIDDEN_DIM = 128              # Keep: 128 is good balance
 NUM_LAYERS = 3                # Keep: good depth for feature hierarchy
-DROPOUT = 0.7                 # INCREASED: was 0.5, fixes left view 21% gap
-NODE_EMBED_DIM = 16           # INCREASED: was 8, better node differentiation
+DROPOUT = 0.5                 # REDUCED: was 0.7, too aggressive - model not learning
+NODE_EMBED_DIM = 16           # Keep: 16 for better node differentiation
 
-# Training
-LEARNING_RATE = 0.001
-WEIGHT_DECAY = 1e-4           # ADDED: L2 regularization
+# Training - INCREASED LEARNING RATE for faster convergence
+LEARNING_RATE = 0.005         # INCREASED: was 0.001, too slow - severe underfitting
+WEIGHT_DECAY = 5e-5           # REDUCED: was 1e-4, lighter regularization
 EPOCHS = 150
-PATIENCE = 15                 # REDUCED: was 20, faster overfit detection
-BATCH_SIZE = 32
+PATIENCE = 20                 # INCREASED: was 15, give more time to learn
+BATCH_SIZE = 64               # INCREASED: was 32, for more stable gradients
 
 # Early stopping overfit detection
-MAX_OVERFIT_GAP = 25.0        # ADDED: stop if train-test gap exceeds this
+MAX_OVERFIT_GAP = 35.0        # INCREASED: was 25, allow more gap during learning phase
 
 # Data paths
 DATA_DIR = Path("hybrid_classifier/hybrid_features_v3")
