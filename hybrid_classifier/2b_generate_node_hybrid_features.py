@@ -245,12 +245,13 @@ def extract_raw_features(image_path, stick_detector, viewpoint=None, class_idx=N
             class_idx is not None and 
             class_idx in FRONT_VIEW_0_3_CLASSES):
             
-            # Try to estimate stick from finger positions
+            # Try to estimate stick from finger positions (class-specific directions)
             grip_norm, tip_norm = estimate_stick_from_fingers(
                 kpts, 
                 results.pose_world_landmarks.landmark if results.pose_world_landmarks else results.pose_landmarks.landmark,
                 w, h,
-                viewpoint=viewpoint
+                viewpoint=viewpoint,
+                class_idx=class_idx
             )
             
             if grip_norm is not None:
@@ -422,10 +423,10 @@ _fallback_counts = {
 }
 
 
-def estimate_stick_from_fingers(kpts, world_landmarks, img_width, img_height, viewpoint=None):
+def estimate_stick_from_fingers(kpts, world_landmarks, img_width, img_height, viewpoint=None, class_idx=None):
     """
     Estimate stick grip and tip from hand fingers when YOLO stick detection fails.
-    Used for front view classes 0-3 where stick appears as dot/end-on.
+    CLASS-SPECIFIC version for front view classes 0-3 with technique-aware directions.
     
     Fallback chain: pinky -> index -> middle -> ring (same hand)
     
@@ -434,6 +435,7 @@ def estimate_stick_from_fingers(kpts, world_landmarks, img_width, img_height, vi
         world_landmarks: MediaPipe world landmarks for 3D calculations
         img_width, img_height: Image dimensions
         viewpoint: 'front', 'left', 'right', or None
+        class_idx: Class index (0-3 for front view fallback classes)
     
     Returns:
         (grip_x, grip_y), (tip_x, tip_y) in normalized coordinates, or (None, None) if no fingers visible
@@ -447,21 +449,16 @@ def estimate_stick_from_fingers(kpts, world_landmarks, img_width, img_height, vi
         lm = world_landmarks[idx]
         return np.array([lm.x, lm.y, lm.z])
     
-    # Get wrist positions
-    left_wrist_px = to_pixels(15)
-    right_wrist_px = to_pixels(16)
-    
-    # Finger indices per hand (MediaPipe)
-    # Left hand: 17=pinky, 19=index, 21=middle, 23=ring
-    # Right hand: 18=pinky, 20=index, 22=middle, 24=ring
-    LEFT_FINGERS = [17, 19, 21, 23]  # pinky, index, middle, ring
-    RIGHT_FINGERS = [18, 20, 22, 24]  # pinky, index, middle, ring
+    # Get key body landmarks
+    left_shoulder = to_pixels(11)
+    right_shoulder = to_pixels(12)
+    left_hip = to_pixels(23)
+    right_hip = to_pixels(24)
+    nose = to_pixels(0)
+    left_wrist = to_pixels(15)
+    right_wrist = to_pixels(16)
     
     # Calculate torso for length reference
-    left_shoulder = to_pixels(11)
-    left_hip = to_pixels(23)
-    right_shoulder = to_pixels(12)
-    right_hip = to_pixels(24)
     avg_torso_px = (np.linalg.norm(left_shoulder - left_hip) + 
                     np.linalg.norm(right_shoulder - right_hip)) / 2.0
     
@@ -482,22 +479,22 @@ def estimate_stick_from_fingers(kpts, world_landmarks, img_width, img_height, vi
     stick_px = shin_px * (STICK_LENGTH_M / (shin_m + 1e-6))
     stick_px = min(stick_px, avg_torso_px * 2.5)  # Sanity check clamp
     
-    # Try to identify which hand is holding the stick
-    # In classes 0-3, typically left hand for crown/left_*, right hand might be involved
-    # Try left hand first (classes 0-3 are left-side techniques)
-    selected_hand = 'LEFT'
-    selected_grip_px = None
-    selected_finger_name = None
+    # Finger indices per hand (MediaPipe)
+    # Left hand: 17=pinky, 19=index, 21=middle, 23=ring
+    # Right hand: 18=pinky, 20=index, 22=middle, 24=ring
+    LEFT_FINGERS = [17, 19, 21, 23]  # pinky, index, middle, ring
+    RIGHT_FINGERS = [18, 20, 22, 24]  # pinky, index, middle, ring
     
     # Try fingers in priority order: pinky -> index -> middle -> ring
     FINGER_NAMES = ['pinky', 'index', 'middle', 'ring']
+    selected_grip_px = None
+    selected_finger_name = None
     
     for hand, fingers in [('LEFT', LEFT_FINGERS), ('RIGHT', RIGHT_FINGERS)]:
         for finger_idx, finger_name in zip(fingers, FINGER_NAMES):
             visibility = kpts[finger_idx][3]
             if visibility > 0.5:  # Finger is visible
                 selected_grip_px = to_pixels(finger_idx)
-                selected_hand = hand
                 selected_finger_name = finger_name
                 break
         if selected_grip_px is not None:
@@ -507,32 +504,56 @@ def estimate_stick_from_fingers(kpts, world_landmarks, img_width, img_height, vi
         # No fingers visible, can't estimate
         return None, None
     
-    # Estimate stick direction
-    # For front view end-on stick: direction is roughly perpendicular to camera
-    # Use body orientation to estimate
+    # CLASS-SPECIFIC DIRECTION RULES for front view
+    # Calculate reference points
     shoulder_center = (left_shoulder + right_shoulder) / 2
     hip_center = (left_hip + right_hip) / 2
+    body_up = np.array([0, -1])  # Up direction in image (y decreases upward)
     
-    # Body orientation vector (pointing "forward" roughly)
-    body_dir = shoulder_center - hip_center
-    body_dir_len = np.linalg.norm(body_dir) + 1e-6
+    # Default direction (fallback if class_idx not recognized)
+    direction = body_up
     
-    # For front view, stick often points somewhat toward camera or at an angle
-    # Use a combination of body orientation and a slight random/estimate
-    # In practice, for front view thrusts, stick is roughly perpendicular to body plane
+    if class_idx == 0:  # crown_thrust_correct
+        # Crown thrust: Stick points UPWARD toward head
+        # Direction from grip toward nose/head area
+        head_direction = nose - selected_grip_px
+        head_direction_norm = np.linalg.norm(head_direction) + 1e-6
+        direction = head_direction / head_direction_norm
+        # Add slight upward bias (crown is overhead)
+        direction = 0.7 * direction + 0.3 * body_up
+        direction = direction / (np.linalg.norm(direction) + 1e-6)
+        
+    elif class_idx == 1:  # left_chest_thrust_correct
+        # Chest thrust: Stick points FORWARD (slightly right/up from left hand)
+        # From left hand toward center/chest area
+        chest_target = np.array([img_width * 0.5, img_height * 0.4])  # Center chest
+        chest_direction = chest_target - selected_grip_px
+        chest_direction_norm = np.linalg.norm(chest_direction) + 1e-6
+        direction = chest_direction / chest_direction_norm
+        
+    elif class_idx == 2:  # left_elbow_block_correct
+        # Elbow block: Stick is HORIZONTAL across body (defensive)
+        # From left hand toward right side
+        right_target = np.array([img_width * 0.7, selected_grip_px[1]])  # Right side, same height
+        block_direction = right_target - selected_grip_px
+        block_direction_norm = np.linalg.norm(block_direction) + 1e-6
+        direction = block_direction / block_direction_norm
+        # Ensure mostly horizontal (reduce vertical component)
+        direction[1] *= 0.3  # Dampen vertical
+        direction = direction / (np.linalg.norm(direction) + 1e-6)
+        
+    elif class_idx == 3:  # left_eye_thrust_correct
+        # Eye thrust: Stick points UP and RIGHT toward face
+        # From left hand toward nose/eye area
+        eye_target = nose + np.array([img_width * 0.05, -img_height * 0.1])  # Slightly right of nose
+        eye_direction = eye_target - selected_grip_px
+        eye_direction_norm = np.linalg.norm(eye_direction) + 1e-6
+        direction = eye_direction / eye_direction_norm
+        # Add upward bias
+        direction = 0.6 * direction + 0.4 * body_up
+        direction = direction / (np.linalg.norm(direction) + 1e-6)
     
-    # Perpendicular to body in image plane (left/right direction)
-    perp_dir = np.array([-body_dir[1], body_dir[0]])  # Rotate 90 degrees
-    perp_dir = perp_dir / (np.linalg.norm(perp_dir) + 1e-6)
-    
-    # Determine direction based on which hand
-    if selected_hand == 'LEFT':
-        # Left hand typically holds stick pointing leftward (from body perspective)
-        direction = -perp_dir
-    else:
-        direction = perp_dir
-    
-    # Estimate tip position
+    # Estimate tip position using class-specific direction
     tip_px = selected_grip_px + direction * stick_px
     
     # Normalize back to [0,1]
