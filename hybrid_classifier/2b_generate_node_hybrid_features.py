@@ -169,13 +169,24 @@ def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img
     return tuple(grip_px), tuple(corrected_tip_px)
 
 
-def extract_raw_features(image_path, stick_detector, viewpoint=None):
+def extract_raw_features(image_path, stick_detector, viewpoint=None, class_idx=None):
     """
     Extract raw features from a single image.
+    
+    For front view classes 0-3, implements fallback stick estimation using finger 
+    landmarks when YOLO stick detection fails (stick appears as dot in front view).
+    
+    Args:
+        image_path: Path to image file
+        stick_detector: YOLO model for stick detection
+        viewpoint: 'front', 'left', 'right', or None
+        class_idx: Class index (0-12), used for front 0-3 fallback logic
+    
     Returns:
         - pose_keypoints: [33, 3] array (x, y, visibility)
         - stick_keypoints: [2, 3] array (grip and tip)
         - global_geometric_features: dict of computed features
+        - None if pose detection fails or stick+fallback both fail
     """
     img = cv2.imread(str(image_path))
     if img is None:
@@ -226,9 +237,40 @@ def extract_raw_features(image_path, stick_detector, viewpoint=None):
             stick_grip = [stick_kpts[0, 0] / w, stick_kpts[0, 1] / h, 0.0, stick_kpts[0, 2]]
             stick_tip = [stick_kpts[1, 0] / w, stick_kpts[1, 1] / h, 0.0, stick_kpts[1, 2]]
     else:
-        # Issue #5: No stick detected - use NaN sentinel
-        stick_grip = [float('nan'), float('nan'), 0.0, 0.0]
-        stick_tip = [float('nan'), float('nan'), 0.0, 0.0]
+        # No stick detected by YOLO
+        # For front view classes 0-3, try finger fallback
+        FRONT_VIEW_0_3_CLASSES = [0, 1, 2, 3]  # crown, left_chest, left_elbow, left_eye
+        
+        if (viewpoint == 'front' and 
+            class_idx is not None and 
+            class_idx in FRONT_VIEW_0_3_CLASSES):
+            
+            # Try to estimate stick from finger positions
+            grip_norm, tip_norm = estimate_stick_from_fingers(
+                kpts, 
+                results.pose_world_landmarks.landmark if results.pose_world_landmarks else results.pose_landmarks.landmark,
+                w, h,
+                viewpoint=viewpoint
+            )
+            
+            if grip_norm is not None:
+                # Successfully estimated from fingers
+                stick_grip = [grip_norm[0], grip_norm[1], 0.0, 0.5]  # z=0, confidence=0.5
+                stick_tip = [tip_norm[0], tip_norm[1], 0.0, 0.5]
+                
+                # Track fallback count
+                if class_idx in _fallback_counts:
+                    _fallback_counts[class_idx] += 1
+                
+                # Log periodically (every 10 samples)
+                if _fallback_counts[class_idx] % 10 == 1:
+                    print(f"[FRONT_0-3_FALLBACK] {image_path.name}: class={CLASS_NAMES[class_idx]}, count={_fallback_counts[class_idx]}")
+            else:
+                # No fingers visible either, skip this sample
+                return None
+        else:
+            # Not front 0-3 or class_idx not provided, skip as before
+            return None
     
     stick_keypoints = np.array([stick_grip, stick_tip])
     
@@ -371,13 +413,142 @@ def extract_node_features(pose_keypoints, stick_keypoints):
     return np.array(node_features, dtype=np.float32)
 
 
+# Track fallback counts for front view classes 0-3
+_fallback_counts = {
+    0: 0,  # crown_thrust_correct
+    1: 0,  # left_chest_thrust_correct
+    2: 0,  # left_elbow_block_correct
+    3: 0,  # left_eye_thrust_correct
+}
+
+
+def estimate_stick_from_fingers(kpts, world_landmarks, img_width, img_height, viewpoint=None):
+    """
+    Estimate stick grip and tip from hand fingers when YOLO stick detection fails.
+    Used for front view classes 0-3 where stick appears as dot/end-on.
+    
+    Fallback chain: pinky -> index -> middle -> ring (same hand)
+    
+    Args:
+        kpts: MediaPipe pose landmarks [33, 4] array (x, y, z, visibility)
+        world_landmarks: MediaPipe world landmarks for 3D calculations
+        img_width, img_height: Image dimensions
+        viewpoint: 'front', 'left', 'right', or None
+    
+    Returns:
+        (grip_x, grip_y), (tip_x, tip_y) in normalized coordinates, or (None, None) if no fingers visible
+    """
+    STICK_LENGTH_M = 0.71  # Standard Arnis stick length in meters
+    
+    def to_pixels(idx):
+        return np.array([kpts[idx][0] * img_width, kpts[idx][1] * img_height])
+    
+    def get_world_point(idx):
+        lm = world_landmarks[idx]
+        return np.array([lm.x, lm.y, lm.z])
+    
+    # Get wrist positions
+    left_wrist_px = to_pixels(15)
+    right_wrist_px = to_pixels(16)
+    
+    # Finger indices per hand (MediaPipe)
+    # Left hand: 17=pinky, 19=index, 21=middle, 23=ring
+    # Right hand: 18=pinky, 20=index, 22=middle, 24=ring
+    LEFT_FINGERS = [17, 19, 21, 23]  # pinky, index, middle, ring
+    RIGHT_FINGERS = [18, 20, 22, 24]  # pinky, index, middle, ring
+    
+    # Calculate torso for length reference
+    left_shoulder = to_pixels(11)
+    left_hip = to_pixels(23)
+    right_shoulder = to_pixels(12)
+    right_hip = to_pixels(24)
+    avg_torso_px = (np.linalg.norm(left_shoulder - left_hip) + 
+                    np.linalg.norm(right_shoulder - right_hip)) / 2.0
+    
+    # Calculate shin length for stick length reference
+    left_knee = to_pixels(25)
+    left_ankle = to_pixels(27)
+    right_knee = to_pixels(26)
+    right_ankle = to_pixels(28)
+    
+    shin_px = (np.linalg.norm(left_knee - left_ankle) + 
+               np.linalg.norm(right_knee - right_ankle)) / 2.0
+    
+    # 3D shin length (meters)
+    shin_m = (np.linalg.norm(get_world_point(25) - get_world_point(27)) +
+              np.linalg.norm(get_world_point(26) - get_world_point(28))) / 2.0
+    
+    # Calculate stick length in pixels
+    stick_px = shin_px * (STICK_LENGTH_M / (shin_m + 1e-6))
+    stick_px = min(stick_px, avg_torso_px * 2.5)  # Sanity check clamp
+    
+    # Try to identify which hand is holding the stick
+    # In classes 0-3, typically left hand for crown/left_*, right hand might be involved
+    # Try left hand first (classes 0-3 are left-side techniques)
+    selected_hand = 'LEFT'
+    selected_grip_px = None
+    selected_finger_name = None
+    
+    # Try fingers in priority order: pinky -> index -> middle -> ring
+    FINGER_NAMES = ['pinky', 'index', 'middle', 'ring']
+    
+    for hand, fingers in [('LEFT', LEFT_FINGERS), ('RIGHT', RIGHT_FINGERS)]:
+        for finger_idx, finger_name in zip(fingers, FINGER_NAMES):
+            visibility = kpts[finger_idx][3]
+            if visibility > 0.5:  # Finger is visible
+                selected_grip_px = to_pixels(finger_idx)
+                selected_hand = hand
+                selected_finger_name = finger_name
+                break
+        if selected_grip_px is not None:
+            break
+    
+    if selected_grip_px is None:
+        # No fingers visible, can't estimate
+        return None, None
+    
+    # Estimate stick direction
+    # For front view end-on stick: direction is roughly perpendicular to camera
+    # Use body orientation to estimate
+    shoulder_center = (left_shoulder + right_shoulder) / 2
+    hip_center = (left_hip + right_hip) / 2
+    
+    # Body orientation vector (pointing "forward" roughly)
+    body_dir = shoulder_center - hip_center
+    body_dir_len = np.linalg.norm(body_dir) + 1e-6
+    
+    # For front view, stick often points somewhat toward camera or at an angle
+    # Use a combination of body orientation and a slight random/estimate
+    # In practice, for front view thrusts, stick is roughly perpendicular to body plane
+    
+    # Perpendicular to body in image plane (left/right direction)
+    perp_dir = np.array([-body_dir[1], body_dir[0]])  # Rotate 90 degrees
+    perp_dir = perp_dir / (np.linalg.norm(perp_dir) + 1e-6)
+    
+    # Determine direction based on which hand
+    if selected_hand == 'LEFT':
+        # Left hand typically holds stick pointing leftward (from body perspective)
+        direction = -perp_dir
+    else:
+        direction = perp_dir
+    
+    # Estimate tip position
+    tip_px = selected_grip_px + direction * stick_px
+    
+    # Normalize back to [0,1]
+    grip_norm = [selected_grip_px[0] / img_width, selected_grip_px[1] / img_height]
+    tip_norm = [tip_px[0] / img_width, tip_px[1] / img_height]
+    
+    return grip_norm, tip_norm
+
+
 def process_single_image(args):
     """Process a single image (for multiprocessing)"""
     img_path, class_idx, viewpoint, templates, stick_detector = args
     
     try:
-        # Extract raw features
-        raw_data = extract_raw_features(img_path, stick_detector, viewpoint=viewpoint)
+        # Extract raw features (pass class_idx for front 0-3 fallback)
+        raw_data = extract_raw_features(img_path, stick_detector, viewpoint=viewpoint, class_idx=class_idx)
         if raw_data is None:
             return None
         
