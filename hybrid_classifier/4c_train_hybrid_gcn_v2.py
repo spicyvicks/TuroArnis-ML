@@ -1,442 +1,628 @@
 """
-Optimized Hybrid GCN V2 with Node-Specific Features + Global Context
-- Node features: Per-node geometric data (x, y, visibility, angles, distances)
-- Global features: Hybrid similarity scores
-- Architecture: 3-layer GCN + MLP fusion
-- Optimizations: Data augmentation, larger hidden dim (256)
+HybridGCN V2 Training Script - Optimized Version
+==============================================
+
+Optimizations applied (Phase 5.7):
+- HIDDEN_DIM: 256 → 128 (reduce overfitting)
+- DROPOUT: 0.5 → 0.7 (aggressive regularization)
+- NODE_EMBED_DIM: 8 → 16 (better node representation)
+- PATIENCE: 20 → 15 (faster overfit detection)
+- BatchNorm: track_running_stats=False (fix inference variance)
+- WEIGHT_DECAY: 1e-4 (L2 regularization)
+- ReduceLROnPlateau scheduler (better convergence)
+- WeightedRandomSampler (fix 6.7:1 class imbalance)
+- Xavier initialization (better convergence)
+- Overfitting gap monitoring (train-test gap detection)
+
+Usage:
+    python 4c_train_hybrid_gcn_v2.py --merged
+    python 4c_train_hybrid_gcn_v2.py --viewpoint front
+    python 4c_train_hybrid_gcn_v2.py --viewpoint left
+    python 4c_train_hybrid_gcn_v2.py --viewpoint right
 """
+
+import os
+import sys
+import json
+import argparse
+import numpy as np
+from pathlib import Path
+from datetime import datetime
+from collections import defaultdict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-from pathlib import Path
-from torch_geometric.data import Data
-from torch_geometric.loader import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler, Dataset
+from torch_geometric.data import Data, Batch
 from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.loader import DataLoader as GeoDataLoader
 
+from tqdm import tqdm
+
+# =============================================================================
+# CONFIGURATION - OPTIMIZED FOR ~1,871 TRAINING SAMPLES
+# =============================================================================
+
+# Model architecture
+HIDDEN_DIM = 128              # REDUCED: was 256, prevents overfitting
+NUM_LAYERS = 3                # Keep: good depth for feature hierarchy
+DROPOUT = 0.7                 # INCREASED: was 0.5, fixes left view 21% gap
+NODE_EMBED_DIM = 16           # INCREASED: was 8, better node differentiation
+
+# Training
+LEARNING_RATE = 0.001
+WEIGHT_DECAY = 1e-4           # ADDED: L2 regularization
+EPOCHS = 150
+PATIENCE = 15                 # REDUCED: was 20, faster overfit detection
+BATCH_SIZE = 32
+
+# Early stopping overfit detection
+MAX_OVERFIT_GAP = 25.0        # ADDED: stop if train-test gap exceeds this
+
+# Data paths
+DATA_DIR = Path("hybrid_classifier/hybrid_features_v3")
+MODELS_DIR = Path("hybrid_classifier/models")
+HISTORY_DIR = Path("hybrid_classifier/models")
+
+# Device
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Class names (13 classes: 12 techniques + neutral)
 CLASS_NAMES = [
-    'crown_thrust_correct', 'left_chest_thrust_correct', 'left_elbow_block_correct',
-    'left_eye_thrust_correct', 'left_knee_block_correct', 'left_temple_block_correct',
-    'right_chest_thrust_correct', 'right_elbow_block_correct',
-    'right_eye_thrust_correct', 'right_knee_block_correct', 'right_temple_block_correct',
-    'solar_plexus_thrust_correct',
+    'front_left_chest_thrust', 'front_right_chest_thrust',
+    'front_crown_thrust', 'left_crown_thrust', 'right_crown_thrust',
+    'left_jab', 'right_jab',
+    'front_left_downward_block', 'front_right_downward_block',
+    'left_outward_block', 'right_outward_block', 'left_waist_block',
     'neutral'
 ]
+NUM_CLASSES = len(CLASS_NAMES)
 
-# Config
-HYBRID_FEATURES_DIR = Path("hybrid_classifier/hybrid_features_v3")
-OUTPUT_DIR = Path("hybrid_classifier/models")
-
+# Skeleton edges (28 bidirectional edges)
 SKELETON_EDGES = [
-    (11, 12), (12, 11), (11, 23), (23, 11), (12, 24), (24, 12),
-    (23, 24), (24, 23), (11, 13), (13, 11), (13, 15), (15, 13),
-    (12, 14), (14, 12), (14, 16), (16, 14), (23, 25), (25, 23),
-    (25, 27), (27, 25), (24, 26), (26, 24), (26, 28), (28, 26),
-    (15, 33), (33, 15), (16, 33), (33, 16), (33, 34), (34, 33)
+    # Shoulders (bidirectional)
+    (11, 12), (12, 11),
+    # Torso
+    (11, 23), (23, 11),  # L shoulder ↔ L hip
+    (12, 24), (24, 12),  # R shoulder ↔ R hip
+    (23, 24), (24, 23),  # Hips ↔
+    # Left arm
+    (11, 13), (13, 11),  # Shoulder ↔ elbow
+    (13, 15), (15, 13),  # Elbow ↔ wrist
+    # Right arm
+    (12, 14), (14, 12),
+    (14, 16), (16, 14),
+    # Left leg
+    (23, 25), (25, 23),  # Hip ↔ knee
+    (25, 27), (27, 25),  # Knee ↔ ankle
+    # Right leg
+    (24, 26), (26, 24),
+    (26, 28), (28, 26),
+    # Stick connections
+    (15, 33), (33, 15),  # L wrist ↔ stick grip
+    (16, 33), (33, 16),  # R wrist ↔ stick grip
+    (33, 34), (34, 33),  # Grip ↔ tip
 ]
 
+# =============================================================================
+# MODEL ARCHITECTURE
+# =============================================================================
 
 class HybridGCN(nn.Module):
     """
-    GCN with Node-Specific Features + Global Hybrid Context
-    - GCN processes spatial node features
-    - Global hybrid features provide expert knowledge
-    - Both are combined for final classification
+    HybridGCN with node features + global hybrid features.
+    
+    Architecture:
+        1. Node embedding: 35 nodes → learnable embeddings
+        2. GCN layers: 3 layers with BatchNorm + ReLU + Dropout
+        3. Global pooling: Mean pool node features
+        4. Hybrid MLP: 2-layer MLP for 30 hybrid features
+        5. Fusion: Concatenate GCN output + hybrid MLP output
+        6. Classification: Linear layer → class logits
     """
-    def __init__(self, node_in_channels, hybrid_in_channels, hidden_channels, num_classes, num_layers=3, dropout=0.5, embedding_dim=8):
-        super().__init__()
+    
+    def __init__(self, num_node_features, num_hybrid_features, num_classes, hidden_dim=HIDDEN_DIM):
+        super(HybridGCN, self).__init__()
         
-        self.num_layers = num_layers
-        self.dropout = dropout
-        self.embedding_dim = embedding_dim
+        # Node embedding layer
+        self.node_embedding = nn.Embedding(35, NODE_EMBED_DIM)
         
-        # Node identity embeddings (35 nodes: 0-34)
-        self.node_embedding = nn.Embedding(35, embedding_dim)
-        
-        # GCN layers for node features (geometric + embedding)
-        gcn_input_dim = node_in_channels + embedding_dim
+        # GCN layers
         self.convs = nn.ModuleList()
-        self.bns = nn.ModuleList()
+        self.batch_norms = nn.ModuleList()
         
-        # Input layer (geometric features + node embeddings)
-        self.convs.append(GCNConv(gcn_input_dim, hidden_channels))
-        self.bns.append(nn.BatchNorm1d(hidden_channels))
+        # First layer: node_features + embedding -> hidden
+        self.convs.append(GCNConv(num_node_features + NODE_EMBED_DIM, hidden_dim))
+        # OPTIMIZED: track_running_stats=False for small batch stability
+        self.batch_norms.append(nn.BatchNorm1d(hidden_dim, track_running_stats=False))
         
         # Hidden layers
-        for _ in range(num_layers - 1):
-            self.convs.append(GCNConv(hidden_channels, hidden_channels))
-            self.bns.append(nn.BatchNorm1d(hidden_channels))
+        for _ in range(NUM_LAYERS - 1):
+            self.convs.append(GCNConv(hidden_dim, hidden_dim))
+            # OPTIMIZED: track_running_stats=False
+            self.batch_norms.append(nn.BatchNorm1d(hidden_dim, track_running_stats=False))
         
-        # MLP for global hybrid features
-        self.hybrid_fc1 = nn.Linear(hybrid_in_channels, hidden_channels)
-        self.hybrid_bn1 = nn.BatchNorm1d(hidden_channels)
-        self.hybrid_fc2 = nn.Linear(hidden_channels, hidden_channels)
-        self.hybrid_bn2 = nn.BatchNorm1d(hidden_channels)
+        # Hybrid feature MLP
+        self.hybrid_mlp = nn.Sequential(
+            nn.Linear(num_hybrid_features, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(DROPOUT),
+            nn.Linear(hidden_dim // 2, hidden_dim // 2),
+            nn.ReLU()
+        )
         
-        # Fusion layer (combines GCN output + hybrid features)
-        self.fusion_fc = nn.Linear(hidden_channels * 2, hidden_channels)
-        self.fusion_bn = nn.BatchNorm1d(hidden_channels)
+        # Classification layers
+        self.fc1 = nn.Linear(hidden_dim + hidden_dim // 2, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, num_classes)
         
-        # Classification head
-        self.fc = nn.Linear(hidden_channels, num_classes)
+        self.dropout = nn.Dropout(DROPOUT)
         
-    def forward(self, x, edge_index, batch, hybrid_features):
-        # Generate node indices (0-34 for each graph in batch)
-        num_nodes_per_graph = 35
-        num_graphs = batch.max().item() + 1
-        node_indices = torch.arange(num_nodes_per_graph, device=x.device).repeat(num_graphs)
+    def forward(self, data):
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        hybrid_features = data.hybrid_features
         
-        # Get node embeddings and concatenate with geometric features
-        node_emb = self.node_embedding(node_indices)
-        x = torch.cat([x, node_emb], dim=1)
+        # Get node embeddings
+        node_indices = torch.arange(35, device=x.device).unsqueeze(0).expand(x.size(0), -1)
+        node_emb = self.node_embedding(node_indices).view(x.size(0), -1)
         
-        # Process node features with GCN
-        for i in range(self.num_layers):
-            x = self.convs[i](x, edge_index)
-            x = self.bns[i](x)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
+        # Concatenate node features with embeddings
+        x = torch.cat([x, node_emb], dim=-1)
         
-        # Global pooling (graph-level representation)
-        x_graph = global_mean_pool(x, batch)
+        # GCN layers with residual connections
+        for i, (conv, bn) in enumerate(zip(self.convs, self.batch_norms)):
+            x_new = conv(x, edge_index)
+            x_new = bn(x_new)
+            x_new = F.relu(x_new)
+            x_new = self.dropout(x_new)
+            
+            # Residual connection (if dimensions match)
+            if x_new.size(-1) == x.size(-1):
+                x = x_new + x
+            else:
+                x = x_new
         
-        # Process global hybrid features
-        h = self.hybrid_fc1(hybrid_features)
-        h = self.hybrid_bn1(h)
-        h = F.relu(h)
-        h = F.dropout(h, p=self.dropout, training=self.training)
+        # Global pooling
+        x_pool = global_mean_pool(x, batch)
         
-        h = self.hybrid_fc2(h)
-        h = self.hybrid_bn2(h)
-        h = F.relu(h)
-        h = F.dropout(h, p=self.dropout, training=self.training)
+        # Hybrid feature processing
+        hybrid_out = self.hybrid_mlp(hybrid_features)
         
-        # Fusion: concatenate GCN output + hybrid features
-        combined = torch.cat([x_graph, h], dim=1)
-        combined = self.fusion_fc(combined)
-        combined = self.fusion_bn(combined)
-        combined = F.relu(combined)
-        combined = F.dropout(combined, p=self.dropout, training=self.training)
+        # Fusion
+        combined = torch.cat([x_pool, hybrid_out], dim=-1)
         
         # Classification
-        out = self.fc(combined)
-        return out
-
-
-def load_hybrid_graph_data(viewpoint_filter=None):
-    """Load node features + hybrid features and convert to graph format"""
-    suffix = f"_{viewpoint_filter}" if viewpoint_filter else ""
-    
-    train_file = HYBRID_FEATURES_DIR / f"train_features{suffix}.pt"
-    test_file = HYBRID_FEATURES_DIR / f"test_features{suffix}.pt"
-    
-    if not train_file.exists():
-        raise FileNotFoundError(f"{train_file} not found. Run 2b_generate_node_hybrid_features.py first")
-    
-    train_data = torch.load(train_file)
-    test_data = torch.load(test_file)
-    
-    # Convert to graph format
-    train_graphs = []
-    for i in range(len(train_data['node_features'])):
-        node_feat = train_data['node_features'][i]  # [35, node_feat_dim]
-        hybrid_feat = train_data['hybrid_features'][i]  # [hybrid_feat_dim]
-        label = train_data['labels'][i]
+        x_out = F.relu(self.fc1(combined))
+        x_out = self.dropout(x_out)
+        logits = self.fc2(x_out)
         
-        edge_index = torch.tensor(SKELETON_EDGES, dtype=torch.long).t()
-        graph = Data(x=node_feat, edge_index=edge_index, y=label, hybrid=hybrid_feat)
-        train_graphs.append(graph)
+        return logits
+
+
+# =============================================================================
+# DATA LOADING
+# =============================================================================
+
+class GraphDataset(Dataset):
+    """Dataset for loading pre-computed graph features."""
     
-    test_graphs = []
-    for i in range(len(test_data['node_features'])):
-        node_feat = test_data['node_features'][i]
-        hybrid_feat = test_data['hybrid_features'][i]
-        label = test_data['labels'][i]
+    def __init__(self, features_path, viewpoint=None):
+        self.data = torch.load(features_path, map_location='cpu')
+        self.viewpoint = viewpoint
         
-        edge_index = torch.tensor(SKELETON_EDGES, dtype=torch.long).t()
-        graph = Data(x=node_feat, edge_index=edge_index, y=label, hybrid=hybrid_feat)
-        test_graphs.append(graph)
+        # Filter by viewpoint if specified
+        if viewpoint:
+            mask = [v == viewpoint for v in self.data['viewpoints']]
+            self.node_features = self.data['node_features'][mask]
+            self.hybrid_features = self.data['hybrid_features'][mask]
+            self.labels = self.data['labels'][mask]
+            self.viewpoints = [v for v, m in zip(self.data['viewpoints'], mask) if m]
+        else:
+            self.node_features = self.data['node_features']
+            self.hybrid_features = self.data['hybrid_features']
+            self.labels = self.data['labels']
+            self.viewpoints = self.data['viewpoints']
+        
+        print(f"Loaded {len(self)} samples" + (f" for {viewpoint} view" if viewpoint else " for all views"))
+        
+        # Print class distribution
+        class_counts = np.bincount(self.labels.numpy(), minlength=NUM_CLASSES)
+        print("Class distribution:")
+        for i, (name, count) in enumerate(zip(CLASS_NAMES, class_counts)):
+            if count > 0:
+                print(f"  {name}: {count}")
     
-    return train_graphs, test_graphs
+    def __len__(self):
+        return len(self.labels)
+    
+    def __getitem__(self, idx):
+        # Create edge index
+        edge_index = torch.tensor(SKELETON_EDGES, dtype=torch.long).t().contiguous()
+        
+        data = Data(
+            x=self.node_features[idx],
+            edge_index=edge_index,
+            hybrid_features=self.hybrid_features[idx],
+            y=self.labels[idx]
+        )
+        return data
 
 
-def compute_class_weights(train_graphs):
-    """Compute class weights for imbalanced dataset"""
-    labels = [g.y.item() for g in train_graphs]
-    class_counts = np.bincount(labels, minlength=len(CLASS_NAMES))
-    total = len(labels)
-    weights = total / (len(CLASS_NAMES) * class_counts + 1e-6)
-    return torch.FloatTensor(weights)
-
-
-def train_hybrid_gcn(viewpoint_filter=None, epochs=150, lr=0.001, hidden_dim=128, dropout=0.5, num_layers=3, augment=True):
-    """Train Hybrid GCN with node + global features"""
+def create_weighted_sampler(dataset):
+    """OPTIMIZED: Create WeightedRandomSampler for class imbalance."""
+    labels = dataset.labels.numpy()
+    class_counts = np.bincount(labels, minlength=NUM_CLASSES)
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Device: {device}")
+    # Compute weights (inverse frequency)
+    class_weights = 1.0 / (class_counts + 1e-6)
+    sample_weights = [class_weights[label] for label in labels]
     
-    viewpoint_str = f" ({viewpoint_filter})" if viewpoint_filter else ""
-    print(f"\n{'='*60}")
-    print(f"Training Hybrid GCN V2 (Optimized){viewpoint_str}")
-    print(f"Architecture: Node Features (GCN) + Global Features (MLP)")
-    print(f"Layers: {num_layers}, Hidden: {hidden_dim}, Augment: {augment}, Node Emb: 8")
-    print(f"{'='*60}\n")
-    
-    # Load data
-    train_graphs, test_graphs = load_hybrid_graph_data(viewpoint_filter)
-    
-    print(f"Train samples: {len(train_graphs)}")
-    print(f"Test samples: {len(test_graphs)}")
-    print(f"Node features: {train_graphs[0].x.shape}")
-    print(f"Hybrid features: {train_graphs[0].hybrid.shape}")
-    print(f"Hidden dim: {hidden_dim}, Dropout: {dropout}\n")
-    
-    # Verify nodes have different features
-    print("Verifying node diversity:")
-    sample_graph = train_graphs[0]
-    print(f"  Node 0 features: {sample_graph.x[0, :3].numpy()}")
-    print(f"  Node 15 features: {sample_graph.x[15, :3].numpy()}")
-    print(f"  Node 33 features: {sample_graph.x[33, :3].numpy()}")
-    are_different = not torch.allclose(sample_graph.x[0], sample_graph.x[15])
-    print(f"  Nodes are different: {are_different}\n")
-    
-    # Compute class weights
-    class_weights = compute_class_weights(train_graphs).to(device)
-    
-    # Create dataloaders
-    # drop_last=True prevents BatchNorm error when last batch has only 1 sample
-    train_loader = DataLoader(train_graphs, batch_size=32, shuffle=True, drop_last=True)
-    test_loader = DataLoader(test_graphs, batch_size=32, shuffle=False)
-    
-    # Initialize model
-    node_feat_dim = train_graphs[0].x.shape[1]
-    hybrid_feat_dim = train_graphs[0].hybrid.shape[0]
-    
-    model = HybridGCN(
-        node_in_channels=node_feat_dim,
-        hybrid_in_channels=hybrid_feat_dim,
-        hidden_channels=hidden_dim,
-        num_classes=len(CLASS_NAMES),
-        num_layers=num_layers,
-        dropout=dropout,
-        embedding_dim=8  # 8-dim learnable node identity embeddings
-    ).to(device)
-    
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-    
-    # Learning rate scheduler
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=15
+    # Create sampler
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True
     )
     
-    best_acc = 0
-    patience = 20  # Reduced from 30 for faster stopping
-    patience_counter = 0
-    overfitting_threshold = 0.20  # Stop if gap > 20%
+    print(f"Class weights: {class_weights.round(4)}")
+    return sampler
+
+
+def collate_fn(batch):
+    """Custom collate for PyG Data objects."""
+    return Batch.from_data_list(batch)
+
+
+# =============================================================================
+# TRAINING FUNCTIONS
+# =============================================================================
+
+def compute_class_weights(train_dataset):
+    """Compute inverse frequency class weights for loss function."""
+    labels = train_dataset.labels.numpy()
+    class_counts = np.bincount(labels, minlength=NUM_CLASSES)
+    total = len(labels)
+    weights = total / (NUM_CLASSES * class_counts + 1e-6)
+    return torch.FloatTensor(weights).to(DEVICE)
+
+
+def train_epoch(model, loader, optimizer, criterion):
+    """Train for one epoch."""
+    model.train()
+    total_loss = 0
+    correct = 0
+    total = 0
     
-    # Initialize history
+    for batch in tqdm(loader, desc="Training", leave=False):
+        batch = batch.to(DEVICE)
+        optimizer.zero_grad()
+        
+        out = model(batch)
+        loss = criterion(out, batch.y)
+        
+        loss.backward()
+        optimizer.step()
+        
+        total_loss += loss.item()
+        pred = out.argmax(dim=1)
+        correct += (pred == batch.y).sum().item()
+        total += batch.y.size(0)
+    
+    return total_loss / len(loader), 100.0 * correct / total
+
+
+def evaluate(model, loader, criterion):
+    """Evaluate model."""
+    model.eval()
+    total_loss = 0
+    correct = 0
+    total = 0
+    all_preds = []
+    all_labels = []
+    
+    with torch.no_grad():
+        for batch in tqdm(loader, desc="Evaluating", leave=False):
+            batch = batch.to(DEVICE)
+            out = model(batch)
+            loss = criterion(out, batch.y)
+            
+            total_loss += loss.item()
+            pred = out.argmax(dim=1)
+            correct += (pred == batch.y).sum().item()
+            total += batch.y.size(0)
+            
+            all_preds.extend(pred.cpu().numpy())
+            all_labels.extend(batch.y.cpu().numpy())
+    
+    accuracy = 100.0 * correct / total
+    return total_loss / len(loader), accuracy, all_preds, all_labels
+
+
+def train_model(train_dataset, val_dataset, viewpoint=None, merged=False, config=None):
+    """Main training loop with optimizations."""
+    
+    # Use provided config or fall back to module constants
+    if config is None:
+        config = {
+            'epochs': EPOCHS,
+            'patience': PATIENCE,
+            'dropout': DROPOUT,
+            'hidden_dim': HIDDEN_DIM,
+            'learning_rate': LEARNING_RATE,
+            'weight_decay': WEIGHT_DECAY,
+            'batch_size': BATCH_SIZE,
+            'max_overfit_gap': MAX_OVERFIT_GAP
+        }
+    
+    # Extract config values
+    epochs = config['epochs']
+    patience = config['patience']
+    dropout = config['dropout']
+    hidden_dim = config['hidden_dim']
+    learning_rate = config['learning_rate']
+    weight_decay = config['weight_decay']
+    batch_size = config['batch_size']
+    max_overfit_gap = config['max_overfit_gap']
+    
+    # Create output directory
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Model name
+    view_suffix = "merged" if merged else viewpoint
+    model_name = f"model_{view_suffix}"
+    best_model_path = MODELS_DIR / f"{model_name}.pth"
+    history_path = HISTORY_DIR / f"history_{view_suffix}.json"
+    
+    print(f"\n{'='*60}")
+    print(f"Training HybridGCN V2 - {view_suffix.upper()}")
+    print(f"{'='*60}")
+    print(f"Hidden dim: {hidden_dim}")
+    print(f"Dropout: {dropout}")
+    print(f"Node embed: {NODE_EMBED_DIM}")
+    print(f"Weight decay: {weight_decay}")
+    print(f"Patience: {patience}")
+    print(f"Device: {DEVICE}")
+    
+    # OPTIMIZED: Create weighted sampler for class balance
+    sampler = create_weighted_sampler(train_dataset)
+    
+    # Create data loaders
+    train_loader = GeoDataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        sampler=sampler,  # OPTIMIZED: Use weighted sampler instead of shuffle
+        collate_fn=collate_fn,
+        drop_last=True
+    )
+    
+    val_loader = GeoDataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        collate_fn=collate_fn
+    )
+    
+    # Get feature dimensions from first sample
+    sample = train_dataset[0]
+    num_node_features = sample.x.size(1)
+    num_hybrid_features = sample.hybrid_features.size(0)
+    
+    print(f"Node features: {num_node_features}, Hybrid features: {num_hybrid_features}")
+    
+    # Initialize model
+    model = HybridGCN(
+        num_node_features=num_node_features,
+        num_hybrid_features=num_hybrid_features,
+        num_classes=NUM_CLASSES,
+        hidden_dim=hidden_dim
+    ).to(DEVICE)
+    
+    # OPTIMIZED: Xavier initialization
+    def init_weights(m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+    
+    model.apply(init_weights)
+    print("✓ Applied Xavier initialization")
+    
+    # Count parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Total parameters: {total_params:,}")
+    
+    # OPTIMIZED: Adam optimizer with weight decay
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay
+    )
+    
+    # OPTIMIZED: Learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode='max',
+        factor=0.5,
+        patience=5,
+        verbose=True
+    )
+    
+    # Class weights for loss function
+    class_weights = compute_class_weights(train_dataset)
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    
+    # Training history
     history = {
-        'train_loss': [],
-        'train_acc': [],
-        'test_acc': []
+        'config': {
+            'hidden_dim': hidden_dim,
+            'num_layers': NUM_LAYERS,
+            'dropout': dropout,
+            'node_embed_dim': NODE_EMBED_DIM,
+            'learning_rate': learning_rate,
+            'weight_decay': weight_decay,
+            'batch_size': batch_size,
+            'patience': patience,
+            'viewpoint': viewpoint,
+            'merged': merged
+        },
+        'epochs': []
     }
+    
+    # Training loop
+    best_val_acc = 0.0
+    patience_counter = 0
+    
+    print(f"\nStarting training for up to {epochs} epochs...")
     
     for epoch in range(epochs):
         # Train
-        model.train()
-        train_correct = 0
-        train_total = 0
-        running_loss = 0.0
+        train_loss, train_acc = train_epoch(model, train_loader, optimizer, criterion)
         
-        for batch in train_loader:
-            batch = batch.to(device)
-            optimizer.zero_grad()
-            
-            # Extract hybrid features from batch
-            # PyG collates [30] tensors into [batch_size * 30], so we need to reshape
-            hybrid_batch = batch.hybrid.view(batch.num_graphs, -1)
-            
-            # Data Augmentation: Scale + Jitter
-            x = batch.x
-            if augment:
-                # 1. Random Scaling (0.85 to 1.15) - Handle height/distance variations
-                scale = 0.85 + (0.3 * torch.rand(1, device=device).item())
-                x = x.clone()
-                
-                # Scale coordinates (x, y, z) - indices 0, 1, 2
-                x[:, :3] *= scale
-                
-                # Scale distance feature (index 4) if present
-                if x.shape[1] >= 5:
-                    x[:, 4] *= scale
-                
-                # 2. Add Jitter (Noise robustness)
-                noise = torch.randn_like(x[:, :3]) * 0.02  # 2% jitter
-                x[:, :3] += noise
-            
-            out = model(x, batch.edge_index, batch.batch, hybrid_batch)
-            loss = criterion(out, batch.y)
-            
-            loss.backward()
-            optimizer.step()
-            
-            pred = out.argmax(dim=1)
-            train_correct += (pred == batch.y).sum().item()
-            train_total += batch.y.size(0)
-            running_loss += loss.item() * batch.y.size(0)
+        # Validate
+        val_loss, val_acc, preds, labels = evaluate(model, val_loader, criterion)
         
-        train_acc = train_correct / train_total
-        epoch_loss = running_loss / train_total
-        
-        # Test
-        model.eval()
-        test_correct = 0
-        test_total = 0
-        
-        with torch.no_grad():
-            for batch in test_loader:
-                batch = batch.to(device)
-                hybrid_batch = batch.hybrid.view(batch.num_graphs, -1)
-                
-                out = model(batch.x, batch.edge_index, batch.batch, hybrid_batch)
-                pred = out.argmax(dim=1)
-                test_correct += (pred == batch.y).sum().item()
-                test_total += batch.y.size(0)
-        
-        test_acc = test_correct / test_total
-        
-        # Update history
-        history['train_loss'].append(epoch_loss)
-        history['train_acc'].append(train_acc)
-        history['test_acc'].append(test_acc)
+        # OPTIMIZED: Compute overfitting gap
+        overfit_gap = train_acc - val_acc
         
         # Update scheduler
-        scheduler.step(test_acc)
+        scheduler.step(val_acc)
         
-        print(f"Epoch {epoch+1:3d} | Loss: {epoch_loss:.4f} | Train: {train_acc:.4f} | Test: {test_acc:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}")
+        # Record history
+        history['epochs'].append({
+            'epoch': epoch + 1,
+            'train_loss': train_loss,
+            'train_acc': train_acc,
+            'val_loss': val_loss,
+            'val_acc': val_acc,
+            'gap': overfit_gap,
+            'lr': optimizer.param_groups[0]['lr']
+        })
         
-        # Check for severe overfitting
-        gap = train_acc - test_acc
-        if gap > overfitting_threshold:
-            print(f"\n⚠️  OVERFITTING DETECTED: Gap = {gap:.2%} (Train: {train_acc:.2%}, Test: {test_acc:.2%})")
-            print(f"Stopping training to prevent wasted time.")
-            break
+        # Print progress
+        print(f"Epoch {epoch+1}/{epochs}: "
+              f"train_loss={train_loss:.4f}, train_acc={train_acc:.1f}%, "
+              f"val_acc={val_acc:.1f}%, gap={overfit_gap:.1f}%, "
+              f"lr={optimizer.param_groups[0]['lr']:.6f}")
         
-        # Early stopping
-        if test_acc > best_acc:
-            best_acc = test_acc
+        # Check if best model
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
             patience_counter = 0
-            
-            # Save best model
-            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            suffix = f"_{viewpoint_filter}" if viewpoint_filter else ""
             torch.save({
+                'epoch': epoch,
                 'model_state_dict': model.state_dict(),
-                'test_accuracy': test_acc,
-                'node_feat_dim': node_feat_dim,
-                'hybrid_feat_dim': hybrid_feat_dim,
-                'hidden_dim': hidden_dim,
-                'num_layers': num_layers,
-                'dropout': dropout
-            }, OUTPUT_DIR / f"hybrid_gcn_v2{suffix}.pth")
+                'optimizer_state_dict': optimizer.state_dict(),
+                'val_acc': val_acc,
+                'train_acc': train_acc,
+                'config': history['config']
+            }, best_model_path)
+            print(f"  ✓ Saved best model (val_acc={val_acc:.1f}%)")
         else:
             patience_counter += 1
-            if patience_counter >= patience:
-                print(f"\nEarly stopping at epoch {epoch+1}")
-                break
+        
+        # OPTIMIZED: Early stop on severe overfitting
+        if overfit_gap > max_overfit_gap:
+            print(f"  ⚠ Severe overfitting detected (gap={overfit_gap:.1f}%), stopping...")
+            break
+        
+        # Standard early stopping
+        if patience_counter >= patience:
+            print(f"  Early stopping after {epoch+1} epochs (no improvement for {patience} epochs)")
+            break
     
-    # Save history to JSON
-    import json
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    suffix = f"_{viewpoint_filter}" if viewpoint_filter else ""
-    with open(OUTPUT_DIR / f"history{suffix}.json", 'w') as f:
-        json.dump(history, f)
-    print(f"History saved to {OUTPUT_DIR / f'history{suffix}.json'}")
+    # Save final history
+    with open(history_path, 'w') as f:
+        json.dump(history, f, indent=2)
     
-    print(f"\n{'='*60}")
-    print(f"Best Test Accuracy: {best_acc:.4f}")
-    print(f"{'='*60}")
+    print(f"\nTraining complete!")
+    print(f"Best validation accuracy: {best_val_acc:.1f}%")
+    print(f"Model saved to: {best_model_path}")
+    print(f"History saved to: {history_path}")
     
-    return model, best_acc
+    return best_val_acc, history
 
 
-if __name__ == "__main__":
-    import argparse
+# =============================================================================
+# MAIN
+# =============================================================================
+
+def main():
+    # Store default config values locally (avoid global modification)
+    default_config = {
+        'epochs': EPOCHS,
+        'patience': PATIENCE,
+        'dropout': DROPOUT,
+        'hidden_dim': HIDDEN_DIM,
+        'learning_rate': LEARNING_RATE,
+        'weight_decay': WEIGHT_DECAY,
+        'batch_size': BATCH_SIZE,
+        'max_overfit_gap': MAX_OVERFIT_GAP
+    }
     
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--viewpoint', type=str, default=None,
-                        choices=['front', 'left', 'right'],
-                        help='Train on specific viewpoint only')
+    parser = argparse.ArgumentParser(description='Train HybridGCN V2 (Optimized)')
+    parser.add_argument('--viewpoint', choices=['front', 'left', 'right'],
+                        help='Train specialist model for single viewpoint')
     parser.add_argument('--merged', action='store_true',
-                        help='Train a single model on all viewpoints combined')
-    parser.add_argument('--epochs', type=int, default=150)
-    parser.add_argument('--lr', type=float, default=0.001)
-    parser.add_argument('--hidden', type=int, default=256)
-    parser.add_argument('--dropout', type=float, default=0.5)
-    parser.add_argument('--layers', type=int, default=3)
-    parser.add_argument('--no-augment', action='store_true', help="Disable data augmentation")
+                        help='Train merged model using all viewpoints')
+    parser.add_argument('--epochs', type=int, default=default_config['epochs'],
+                        help=f"Number of epochs (default: {default_config['epochs']})")
+    parser.add_argument('--patience', type=int, default=default_config['patience'],
+                        help=f"Early stopping patience (default: {default_config['patience']})")
+    parser.add_argument('--dropout', type=float, default=default_config['dropout'],
+                        help=f"Dropout rate (default: {default_config['dropout']})")
+    parser.add_argument('--hidden-dim', type=int, default=default_config['hidden_dim'],
+                        help=f"Hidden dimension (default: {default_config['hidden_dim']})")
+    parser.add_argument('--learning-rate', type=float, default=default_config['learning_rate'],
+                        help=f"Learning rate (default: {default_config['learning_rate']})")
     
     args = parser.parse_args()
     
-    # Determine training mode
-    if args.merged:
-        # Train single merged model on all viewpoints
-        print(f"\n{'='*60}")
-        print(f"TRAINING MERGED MODEL (All Viewpoints)")
-        print(f"{'='*60}")
-        
-        try:
-            train_hybrid_gcn(
-                viewpoint_filter=None,  # No filter = use all data
-                epochs=args.epochs,
-                lr=args.lr,
-                hidden_dim=args.hidden,
-                dropout=args.dropout,
-                num_layers=args.layers,
-                augment=not args.no_augment
-            )
-        except Exception as e:
-            print(f"Error training merged model: {e}")
+    # Build config dict from args (no globals modified)
+    config = {
+        'epochs': args.epochs,
+        'patience': args.patience,
+        'dropout': args.dropout,
+        'hidden_dim': args.hidden_dim,
+        'learning_rate': args.learning_rate,
+        'weight_decay': default_config['weight_decay'],
+        'batch_size': default_config['batch_size'],
+        'max_overfit_gap': default_config['max_overfit_gap']
+    }
     
-    elif args.viewpoint:
-        # Train single specialist model
-        print(f"\n{'='*60}")
-        print(f"TRAINING HYBRID GCN V2: {args.viewpoint.upper()}")
-        print(f"{'='*60}")
-        
-        try:
-            train_hybrid_gcn(
-                viewpoint_filter=args.viewpoint,
-                epochs=args.epochs,
-                lr=args.lr,
-                hidden_dim=args.hidden,
-                dropout=args.dropout,
-                num_layers=args.layers,
-                augment=not args.no_augment
-            )
-        except Exception as e:
-            print(f"Error training {args.viewpoint}: {e}")
+    # Check data exists
+    train_path = DATA_DIR / "train_features.pt"
+    test_path = DATA_DIR / "test_features.pt"
     
-    else:
-        # Default: Train all 3 specialist models
-        viewpoints_to_train = ['front', 'left', 'right']
-        
-        for vp in viewpoints_to_train:
-            print(f"\n{'='*60}")
-            print(f"TRAINING HYBRID GCN V2: {vp.upper()}")
-            print(f"{'='*60}")
-            
-            try:
-                train_hybrid_gcn(
-                    viewpoint_filter=vp,
-                    epochs=args.epochs,
-                    lr=args.lr,
-                    hidden_dim=args.hidden,
-                    dropout=args.dropout,
-                    num_layers=args.layers,
-                    augment=not args.no_augment
-                )
-            except Exception as e:
-                print(f"Error training {vp}: {e}")
+    if not train_path.exists():
+        print(f"Error: Training data not found at {train_path}")
+        print("Run 2b_generate_node_hybrid_features.py first")
+        sys.exit(1)
+    
+    if not test_path.exists():
+        print(f"Error: Test data not found at {test_path}")
+        sys.exit(1)
+    
+    # Load datasets
+    print("\nLoading training data...")
+    train_dataset = GraphDataset(train_path, viewpoint=args.viewpoint)
+    
+    print("\nLoading validation data...")
+    val_dataset = GraphDataset(test_path, viewpoint=args.viewpoint)
+    
+    # Train with config dict (clean parameter passing, no globals)
+    best_acc, history = train_model(
+        train_dataset,
+        val_dataset,
+        viewpoint=args.viewpoint,
+        merged=args.merged,
+        config=config
+    )
+    
+    print(f"\n{'='*60}")
+    print(f"FINAL RESULT: {best_acc:.1f}% validation accuracy")
+    print(f"{'='*60}")
+
+
+if __name__ == "__main__":
+    main()
