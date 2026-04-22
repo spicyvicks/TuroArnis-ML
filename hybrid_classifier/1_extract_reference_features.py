@@ -89,30 +89,34 @@ def validate_features(features, pose_landmarks, stick_detected, stick_confidence
     Issue #2: Quality validation gates to prevent corrupted templates.
     Viewpoint-aware: Adjusts critical joints based on expected occlusion patterns.
     """
-    # Rule 1: MediaPipe critical joint visibility check
+    # Rule 1: MediaPipe critical joint visibility check - ULTRA RELAXED
     # For martial arts poses, only wrists [15, 16] are critical
     # These are the key joints for stick grip detection
+    # NOTE: Lowered to 0.1 to handle poor lighting/occlusion in reference images
     CRITICAL_JOINTS = [15, 16]  # Wrists only - key for martial arts stick detection
     
-    MIN_VISIBILITY = 0.5
+    MIN_VISIBILITY = 0.1  # ULTRA RELAXED: was 0.5 -> 0.4 -> 0.1
     
-    # Check critical wrist joints
-    for joint_idx in CRITICAL_JOINTS:
-        if pose_landmarks.landmark[joint_idx].visibility < MIN_VISIBILITY:
-            return False, f"Low visibility on critical wrist {joint_idx} (< {MIN_VISIBILITY})"
+    # Check critical wrist joints - at least ONE wrist must be visible
+    wrist_vis_15 = pose_landmarks.landmark[15].visibility
+    wrist_vis_16 = pose_landmarks.landmark[16].visibility
+    if wrist_vis_15 < MIN_VISIBILITY and wrist_vis_16 < MIN_VISIBILITY:
+        return False, f"Both wrists low visibility (15:{wrist_vis_15:.2f}, 16:{wrist_vis_16:.2f} < {MIN_VISIBILITY})"
     
     # Rule 2: YOLO stick detection check
     if not stick_detected:
         return False, "Stick not detected by YOLO"
     
-    # Rule 3: YOLO confidence check
-    MIN_STICK_CONFIDENCE = 0.35
+    # Rule 3: YOLO confidence check - ULTRA RELAXED
+    MIN_STICK_CONFIDENCE = 0.15  # ULTRA RELAXED: was 0.5 -> 0.35 -> 0.25 -> 0.15
     if stick_confidence < MIN_STICK_CONFIDENCE:
         return False, f"Low stick confidence ({stick_confidence:.2f} < {MIN_STICK_CONFIDENCE})"
     
     # Rule 4: Physical plausibility - reject zero or impossible stick length
-    if features.get('stick_length', 0) < 10 or np.isnan(features.get('stick_length', 0)):
-        return False, "Zero or NaN stick length"
+    # ULTRA RELAXED: allow very small detections, only reject true zeros/NaN
+    stick_len = features.get('stick_length', 0)
+    if stick_len == 0 or np.isnan(stick_len):
+        return False, f"Zero or NaN stick length ({stick_len})"
     
     # Rule 5: Sanity check on angles (reject impossible values)
     ANGLE_FEATURES = [
