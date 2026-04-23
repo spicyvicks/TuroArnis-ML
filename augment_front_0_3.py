@@ -1,14 +1,15 @@
 """
-Step 5.7.2: Augment Front View Classes 0-3 to Address Imbalance
+Step 5.7.2: Augment Front View Classes 0-3 (Conservative 2x)
 
-Target: Increase classes 0-3 from ~40 samples each to ~223 samples (matching largest class)
-Method: 5x augmentation (1 original + 5 augmented = 6 total per original image)
+Target: Moderately increase classes 0-3 from ~40 to ~120 samples (3x total with originals)
+Method: 2x augmentation (1 original + 2 augmented = 3 total per original image)
 
-Classes to augment:
-- crown_thrust_correct (0): 42 → ~252 samples
-- left_chest_thrust_correct (1): 37 → ~222 samples  
-- left_elbow_block_correct (2): 39 → ~234 samples
-- left_eye_thrust_correct (3): 41 → ~246 samples
+Conservative approach: Less aggressive augmentation to avoid introducing noise
+Expected results:
+- crown_thrust_correct (0): 42 → ~126 samples
+- left_chest_thrust_correct (1): 37 → ~111 samples  
+- left_elbow_block_correct (2): 39 → ~117 samples
+- left_eye_thrust_correct (3): 41 → ~123 samples
 """
 
 import cv2
@@ -26,36 +27,32 @@ TARGET_CLASSES = [
     'left_eye_thrust_correct'      # Class 3
 ]
 
-AUGMENT_FACTOR = 5  # 5 augmented copies per original image
+AUGMENT_FACTOR = 2  # 2 augmented copies per original image (conservative)
 
 def get_augmentation_pipeline(seed=42, always_flip=False):
-    """Define augmentation pipeline with varied parameters"""
+    """Define CONSERVATIVE augmentation pipeline - less aggressive to avoid noise"""
     np.random.seed(seed)
     
     transforms = [
-        # 1. Rotation (±15°) - Wider than standard for more variety
-        A.Rotate(limit=15, p=0.8),
+        # 1. Rotation (±8°) - Conservative, small angle changes
+        A.Rotate(limit=8, p=0.6),
         
-        # 2. Scale/Zoom (0.75-1.25x) - More aggressive scaling
-        A.RandomScale(scale_limit=0.25, p=0.7),
+        # 2. Scale/Zoom (0.9-1.1x) - Minimal scaling to preserve pose
+        A.RandomScale(scale_limit=0.1, p=0.5),
         
-        # 3. Translation (±10% of image)
-        A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0, rotate_limit=0, p=0.5),
+        # 3. Slight Translation (±5% of image) - Minimal movement
+        A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0, rotate_limit=0, p=0.4),
         
-        # 4. Perspective Transform - Simulates camera angle variation
-        A.Perspective(scale=(0.03, 0.08), p=0.4),
+        # 4. Minimal Perspective - Very slight camera angle change
+        A.Perspective(scale=(0.02, 0.04), p=0.3),
         
-        # 5. Brightness/Contrast variation (lighting changes)
-        A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
+        # 5. Subtle Brightness/Contrast - Avoid dramatic lighting changes
+        A.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.1, p=0.4),
         
-        # 6. Horizontal Flip (50% of augmented images)
+        # 6. Horizontal Flip (50% of augmented images) - Essential for front view
         A.HorizontalFlip(p=0.5 if not always_flip else 1.0),
         
-        # 7. Slight blur (focus variation)
-        A.OneOf([
-            A.MotionBlur(blur_limit=3, p=0.3),
-            A.GaussianBlur(blur_limit=3, p=0.3),
-        ], p=0.2),
+        # NOTE: Removed blur - can obscure stick detection which is already difficult
     ]
     
     return A.Compose(transforms)
