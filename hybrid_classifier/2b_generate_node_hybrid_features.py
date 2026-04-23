@@ -239,11 +239,11 @@ def extract_raw_features(image_path, stick_detector, viewpoint=None, class_idx=N
     else:
         # No stick detected by YOLO
         # For front view classes 0-3, try finger fallback
-        FRONT_VIEW_0_3_CLASSES = [0, 1, 2, 3]  # crown, left_chest, left_elbow, left_eye
+        FRONT_ZERO_STICK_CLASSES = [0, 1, 2, 3, 12]  # crown, left_chest, left_elbow, left_eye, neutral
         
         if (viewpoint == 'front' and 
             class_idx is not None and 
-            class_idx in FRONT_VIEW_0_3_CLASSES):
+            class_idx in FRONT_ZERO_STICK_CLASSES):
             
             # For front view classes 0-3, use ZERO stick coordinates instead of estimation
             # This keeps all 35 nodes but sets stick to (0,0,0,0) so model can ignore them
@@ -414,12 +414,13 @@ def extract_node_features(pose_keypoints, stick_keypoints, include_stick=True):
     return np.array(node_features, dtype=np.float32)
 
 
-# Track fallback counts for front view classes 0-3
+# Track zero-stick counts for front view classes 0-3 and 12 (neutral)
 _fallback_counts = {
-    0: 0,  # crown_thrust_correct
-    1: 0,  # left_chest_thrust_correct
-    2: 0,  # left_elbow_block_correct
-    3: 0,  # left_eye_thrust_correct
+    0: 0,   # crown_thrust_correct
+    1: 0,   # left_chest_thrust_correct
+    2: 0,   # left_elbow_block_correct
+    3: 0,   # left_eye_thrust_correct
+    12: 0,  # neutral
 }
 
 
