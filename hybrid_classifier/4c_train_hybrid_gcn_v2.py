@@ -208,7 +208,7 @@ class HybridGCN(nn.Module):
 # =============================================================================
 
 class GraphDataset(Dataset):
-    """Dataset for loading pre-computed graph features with NaN filtering."""
+    """Dataset for loading pre-computed graph features with NaN filtering and stick node masking."""
     
     def __init__(self, features_path, viewpoint=None, filter_nan=True):
         self.data = torch.load(features_path, map_location='cpu')
@@ -237,6 +237,16 @@ class GraphDataset(Dataset):
             self.labels = self.data['labels']
             self.viewpoints = self.data.get('viewpoints', [viewpoint] * len(self.labels))
         
+        # Load has_stick_nodes mask if present (for samples where stick nodes were excluded)
+        if 'has_stick_nodes' in self.data:
+            self.has_stick_nodes = self.data['has_stick_nodes']
+            if viewpoint and has_viewpoints:
+                # Apply same viewpoint filter
+                self.has_stick_nodes = self.has_stick_nodes[mask]
+        else:
+            # Default: all samples have stick nodes
+            self.has_stick_nodes = torch.ones(len(self.labels), dtype=torch.bool)
+        
         # CRITICAL FIX: Filter out NaN samples (from failed stick detection)
         if filter_nan:
             nan_mask = self._get_nan_mask()
@@ -247,6 +257,12 @@ class GraphDataset(Dataset):
                 self.hybrid_features = self.hybrid_features[valid_mask]
                 self.labels = self.labels[valid_mask]
                 self.viewpoints = [v for v, m in zip(self.viewpoints, valid_mask.tolist()) if m]
+                self.has_stick_nodes = self.has_stick_nodes[valid_mask]
+        
+        # Print stats about stick node presence
+        no_stick_count = (~self.has_stick_nodes).sum().item()
+        if no_stick_count > 0:
+            print(f"[INFO] {no_stick_count}/{len(self)} samples ({100*no_stick_count/len(self):.1f}%) without stick nodes")
         
         print(f"Loaded {len(self)} samples" + (f" for {viewpoint} view" if viewpoint else " for all views"))
     
@@ -270,11 +286,19 @@ class GraphDataset(Dataset):
         # Create edge index
         edge_index = torch.tensor(SKELETON_EDGES, dtype=torch.long).t().contiguous()
         
+        # If sample doesn't have stick nodes, mask edges connecting to stick nodes (indices 33, 34)
+        # to prevent message passing to/from zero-padded nodes
+        if not self.has_stick_nodes[idx]:
+            # Filter out edges involving stick nodes (33, 34)
+            mask = (edge_index[0] < 33) & (edge_index[1] < 33)
+            edge_index = edge_index[:, mask]
+        
         data = Data(
             x=self.node_features[idx],
             edge_index=edge_index,
             hybrid_features=self.hybrid_features[idx],
-            y=self.labels[idx]
+            y=self.labels[idx],
+            has_stick_nodes=self.has_stick_nodes[idx]
         )
         return data
 
