@@ -387,16 +387,28 @@ def compute_hybrid_features(raw_features, templates, viewpoint, class_name):
     return np.array(hybrid_features, dtype=np.float32)
 
 
-def extract_node_features(pose_keypoints, stick_keypoints):
+def extract_node_features(pose_keypoints, stick_keypoints, include_stick=True):
     """
     Extract per-node features with 3D coordinates.
     Each node gets: [x, y, z, visibility, distance_to_hip_3d, angle_from_hip]
-    """
-    # Combine all nodes (33 pose + 2 stick)
-    all_keypoints = np.vstack([pose_keypoints, stick_keypoints])
     
+    Args:
+        pose_keypoints: [33, 4] array of pose landmarks
+        stick_keypoints: [2, 4] array of stick grip and tip (or None)
+        include_stick: Whether to include stick nodes (35 total) or just pose (33 total)
+    
+    Returns:
+        node_features: [N, 6] array where N is 33 or 35 depending on include_stick
+    """
     # Compute hip center for reference (3D)
     hip_center = (pose_keypoints[23, :3] + pose_keypoints[24, :3]) / 2  # [x, y, z]
+    
+    if include_stick and stick_keypoints is not None:
+        # Combine all nodes (33 pose + 2 stick)
+        all_keypoints = np.vstack([pose_keypoints, stick_keypoints])
+    else:
+        # Pose only (33 nodes)
+        all_keypoints = pose_keypoints
     
     node_features = []
     for i, kpt in enumerate(all_keypoints):
@@ -568,15 +580,22 @@ def process_single_image(args):
     img_path, class_idx, viewpoint, templates, stick_detector = args
     
     try:
+        # Determine if we should include stick nodes for this sample
+        # For front view: exclude stick for classes 0-3 and 12 (neutral)
+        # These classes either have hard-to-detect sticks (0-3) or no stick (12)
+        FRONT_NO_STICK_CLASSES = [0, 1, 2, 3, 12]  # crown, left_chest, left_elbow, left_eye, neutral
+        include_stick = not (viewpoint == 'front' and class_idx in FRONT_NO_STICK_CLASSES)
+        
         # Extract raw features (pass class_idx for front 0-3 fallback)
         raw_data = extract_raw_features(img_path, stick_detector, viewpoint=viewpoint, class_idx=class_idx)
         if raw_data is None:
             return None
         
-        # Extract node-specific features
+        # Extract node-specific features (33 or 35 nodes depending on class)
         node_features = extract_node_features(
             raw_data['pose_keypoints'],
-            raw_data['stick_keypoints']
+            raw_data['stick_keypoints'],
+            include_stick=include_stick
         )
         
         # Compute global hybrid features
@@ -592,7 +611,8 @@ def process_single_image(args):
             'node_features': node_features,
             'hybrid_features': hybrid_features,
             'label': class_idx,
-            'viewpoint': viewpoint
+            'viewpoint': viewpoint,
+            'has_stick_nodes': include_stick  # Flag for model to know node count
         }
     except Exception as e:
         print(f"Error processing {img_path}: {e}")
@@ -651,23 +671,47 @@ def process_dataset(viewpoint_filter=None, num_workers=None):
                     results.append(result)
         
         # Aggregate results
+        # Handle variable node counts: some samples have 33 nodes (pose only), others have 35 (pose + stick)
+        # Pad 33-node samples to 35 nodes with zeros, track with a mask
         node_features_list = []
         hybrid_features_list = []
         labels_list = []
         viewpoints_list = []
+        has_stick_mask = []  # Track which samples have real stick nodes
+        
+        # First pass: find max nodes and pad if needed
+        max_nodes = 0
+        for result in results:
+            max_nodes = max(max_nodes, result['node_features'].shape[0])
+        
+        print(f"  - Max nodes per sample: {max_nodes} (33 = pose only, 35 = with stick)")
         
         for result in results:
-            node_features_list.append(result['node_features'])
+            node_feats = result['node_features']
+            has_stick = result.get('has_stick_nodes', True)
+            
+            # Pad if needed (samples with 33 nodes get 2 rows of zeros added)
+            if node_feats.shape[0] < max_nodes:
+                padding = np.zeros((max_nodes - node_feats.shape[0], node_feats.shape[1]), dtype=np.float32)
+                node_feats = np.vstack([node_feats, padding])
+            
+            node_features_list.append(node_feats)
             hybrid_features_list.append(result['hybrid_features'])
             labels_list.append(result['label'])
             viewpoints_list.append(result['viewpoint'])
+            has_stick_mask.append(has_stick)
+        
+        # Print stats about node counts
+        no_stick_count = sum(1 for h in has_stick_mask if not h)
+        print(f"  - Samples without stick nodes: {no_stick_count}/{len(results)} ({100*no_stick_count/len(results):.1f}%)")
         
         # Save as PyTorch tensors
         data = {
             'node_features': torch.tensor(np.array(node_features_list), dtype=torch.float32),
             'hybrid_features': torch.tensor(np.array(hybrid_features_list), dtype=torch.float32),
             'labels': torch.tensor(labels_list, dtype=torch.long),
-            'viewpoints': viewpoints_list
+            'viewpoints': viewpoints_list,
+            'has_stick_nodes': torch.tensor(has_stick_mask, dtype=torch.bool)  # Mask for model
         }
         
         suffix = f"_{viewpoint_filter}" if viewpoint_filter else ""
