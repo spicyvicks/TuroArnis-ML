@@ -245,12 +245,10 @@ def extract_raw_features(image_path, stick_detector, viewpoint=None, class_idx=N
             class_idx is not None and 
             class_idx in FRONT_VIEW_0_3_CLASSES):
             
-            # Try to estimate stick from finger positions (class-specific directions)
-            grip_norm, tip_norm = estimate_stick_from_fingers(
+            # Try to estimate stick from pose (arm angles and body dynamics)
+            grip_norm, tip_norm = estimate_stick_from_pose(
                 kpts, 
-                results.pose_world_landmarks.landmark if results.pose_world_landmarks else results.pose_landmarks.landmark,
                 w, h,
-                viewpoint=viewpoint,
                 class_idx=class_idx
             )
             
@@ -435,141 +433,202 @@ _fallback_counts = {
 }
 
 
-def estimate_stick_from_fingers(kpts, world_landmarks, img_width, img_height, viewpoint=None, class_idx=None):
+def estimate_stick_from_pose(kpts, img_width, img_height, class_idx=None):
     """
-    Estimate stick grip and tip from hand fingers when YOLO stick detection fails.
-    CLASS-SPECIFIC version for front view classes 0-3 with technique-aware directions.
+    Estimate stick grip and tip from body pose when YOLO stick detection fails.
+    POSE-DRIVEN estimation using arm angles and body dynamics.
     
-    Fallback chain: pinky -> index -> middle -> ring (same hand)
+    Key insight: For front view techniques, we can infer stick direction from:
+    - Which hand is dominant (forward/extended)
+    - Arm angle (elbow position relative to shoulder/wrist)
+    - Body orientation
+    - Class-specific technique patterns
     
     Args:
         kpts: MediaPipe pose landmarks [33, 4] array (x, y, z, visibility)
-        world_landmarks: MediaPipe world landmarks for 3D calculations
         img_width, img_height: Image dimensions
-        viewpoint: 'front', 'left', 'right', or None
         class_idx: Class index (0-3 for front view fallback classes)
     
     Returns:
-        (grip_x, grip_y), (tip_x, tip_y) in normalized coordinates, or (None, None) if no fingers visible
+        (grip_x, grip_y), (tip_x, tip_y) in normalized coordinates, or (None, None) if can't estimate
     """
     STICK_LENGTH_M = 0.71  # Standard Arnis stick length in meters
     
     def to_pixels(idx):
         return np.array([kpts[idx][0] * img_width, kpts[idx][1] * img_height])
     
-    def get_world_point(idx):
-        lm = world_landmarks[idx]
-        return np.array([lm.x, lm.y, lm.z])
-    
-    # Get key body landmarks
+    # Get body landmarks
     left_shoulder = to_pixels(11)
     right_shoulder = to_pixels(12)
+    left_elbow = to_pixels(13)
+    right_elbow = to_pixels(14)
+    left_wrist = to_pixels(15)
+    right_wrist = to_pixels(16)
     left_hip = to_pixels(23)
     right_hip = to_pixels(24)
     nose = to_pixels(0)
-    left_wrist = to_pixels(15)
-    right_wrist = to_pixels(16)
     
-    # Calculate torso for length reference
-    avg_torso_px = (np.linalg.norm(left_shoulder - left_hip) + 
-                    np.linalg.norm(right_shoulder - right_hip)) / 2.0
-    
-    # Calculate shin length for stick length reference
-    left_knee = to_pixels(25)
-    left_ankle = to_pixels(27)
-    right_knee = to_pixels(26)
-    right_ankle = to_pixels(28)
-    
-    shin_px = (np.linalg.norm(left_knee - left_ankle) + 
-               np.linalg.norm(right_knee - right_ankle)) / 2.0
-    
-    # 3D shin length (meters)
-    shin_m = (np.linalg.norm(get_world_point(25) - get_world_point(27)) +
-              np.linalg.norm(get_world_point(26) - get_world_point(28))) / 2.0
-    
-    # Calculate stick length in pixels
-    stick_px = shin_px * (STICK_LENGTH_M / (shin_m + 1e-6))
-    stick_px = min(stick_px, avg_torso_px * 2.5)  # Sanity check clamp
-    
-    # Finger indices per hand (MediaPipe)
-    # Left hand: 17=pinky, 19=index, 21=middle, 23=ring
-    # Right hand: 18=pinky, 20=index, 22=middle, 24=ring
-    LEFT_FINGERS = [17, 19, 21, 23]  # pinky, index, middle, ring
-    RIGHT_FINGERS = [18, 20, 22, 24]  # pinky, index, middle, ring
-    
-    # Try fingers in priority order: pinky -> index -> middle -> ring
-    FINGER_NAMES = ['pinky', 'index', 'middle', 'ring']
-    selected_grip_px = None
-    selected_finger_name = None
-    
-    for hand, fingers in [('LEFT', LEFT_FINGERS), ('RIGHT', RIGHT_FINGERS)]:
-        for finger_idx, finger_name in zip(fingers, FINGER_NAMES):
-            visibility = kpts[finger_idx][3]
-            if visibility > 0.5:  # Finger is visible
-                selected_grip_px = to_pixels(finger_idx)
-                selected_finger_name = finger_name
-                break
-        if selected_grip_px is not None:
-            break
-    
-    if selected_grip_px is None:
-        # No fingers visible, can't estimate
-        return None, None
-    
-    # CLASS-SPECIFIC DIRECTION RULES for front view
-    # Calculate reference points
+    # Calculate body center and orientation
     shoulder_center = (left_shoulder + right_shoulder) / 2
     hip_center = (left_hip + right_hip) / 2
-    body_up = np.array([0, -1])  # Up direction in image (y decreases upward)
+    body_dir = shoulder_center - hip_center  # Body up direction
+    body_dir_norm = np.linalg.norm(body_dir) + 1e-6
+    body_unit = body_dir / body_dir_norm
     
-    # Default direction (fallback if class_idx not recognized)
-    direction = body_up
+    # Calculate torso for stick length reference
+    avg_torso_px = body_dir_norm
+    stick_px = min(avg_torso_px * 1.8, img_width * 0.4)  # Stick ~1.8x torso, max 40% image width
     
-    if class_idx == 0:  # crown_thrust_correct
-        # Crown thrust: Stick points UPWARD toward head
-        # Direction from grip toward nose/head area
-        head_direction = nose - selected_grip_px
-        head_direction_norm = np.linalg.norm(head_direction) + 1e-6
-        direction = head_direction / head_direction_norm
-        # Add slight upward bias (crown is overhead)
-        direction = 0.7 * direction + 0.3 * body_up
+    # Determine which arm is extended (holding the stick)
+    # For classes 0-3, typically left arm is doing the technique
+    # But we check visibility and extension to be sure
+    
+    left_arm_visible = kpts[13][3] > 0.5 and kpts[15][3] > 0.5  # elbow and wrist
+    right_arm_visible = kpts[14][3] > 0.5 and kpts[16][3] > 0.5
+    
+    # Calculate arm extension (distance from shoulder to wrist)
+    left_arm_len = np.linalg.norm(left_wrist - left_shoulder)
+    right_arm_len = np.linalg.norm(right_wrist - right_shoulder)
+    
+    # Default to left arm for classes 0-3, but check if right is more extended
+    use_left_arm = True
+    if left_arm_visible and right_arm_visible:
+        # Both visible - use the more extended arm (holding stick is typically extended)
+        if right_arm_len > left_arm_len * 1.2:  # Right significantly more extended
+            use_left_arm = False
+    elif not left_arm_visible and right_arm_visible:
+        use_left_arm = False
+    elif not left_arm_visible and not right_arm_visible:
+        return None, None  # Can't estimate without arm visibility
+    
+    # Select arm landmarks
+    if use_left_arm:
+        shoulder, elbow, wrist = left_shoulder, left_elbow, left_wrist
+        elbow_idx, wrist_idx = 13, 15
+    else:
+        shoulder, elbow, wrist = right_shoulder, right_elbow, right_wrist
+        elbow_idx, wrist_idx = 14, 16
+    
+    # Use wrist as grip position (stick is held in hand)
+    grip_px = wrist
+    
+    # Calculate arm direction (shoulder -> elbow -> wrist chain)
+    upper_arm = elbow - shoulder
+    forearm = wrist - elbow
+    arm_direction = wrist - shoulder  # Overall arm direction
+    arm_dir_norm = np.linalg.norm(arm_direction) + 1e-6
+    arm_unit = arm_direction / arm_dir_norm
+    
+    # Calculate forearm direction (more precise for stick pointing)
+    forearm_norm = np.linalg.norm(forearm) + 1e-6
+    forearm_unit = forearm / forearm_norm
+    
+    # Calculate elbow angle to determine arm extension
+    # For thrusts: elbow is extended (almost straight)
+    # For blocks: elbow is bent (90+ degrees)
+    upper_arm_norm = np.linalg.norm(upper_arm) + 1e-6
+    upper_unit = upper_arm / upper_arm_norm
+    
+    # Cosine of angle between upper arm and forearm
+    cos_elbow_angle = np.dot(upper_unit, forearm_unit)
+    elbow_angle_deg = np.degrees(np.arccos(np.clip(cos_elbow_angle, -1, 1)))
+    
+    # EXTENDED vs BENT arm classification
+    is_extended = elbow_angle_deg > 150  # Almost straight arm (thrust)
+    is_bent = elbow_angle_deg < 120  # Clearly bent (block/guard)
+    
+    # POSE-DRIVEN DIRECTION ESTIMATION
+    # Base direction is forearm extension (where hand is pointing)
+    direction = forearm_unit.copy()
+    
+    # Apply class-specific adjustments based on arm pose
+    if class_idx == 0:  # crown_thrust_correct - OVERHEAD STRIKE
+        # Crown thrust: Stick comes from above, striking down
+        # Arm should be extended upward
+        # Direction: Continue forearm upward, slightly toward head center
+        
+        # Weight toward nose from grip
+        head_vector = nose - grip_px
+        head_dist = np.linalg.norm(head_vector) + 1e-6
+        head_unit = head_vector / head_dist
+        
+        # Blend: 70% forearm direction + 30% toward head
+        # But ensure strong upward component
+        direction = 0.6 * forearm_unit + 0.4 * head_unit
+        direction[1] = min(direction[1], -0.3)  # Ensure upward (negative Y)
         direction = direction / (np.linalg.norm(direction) + 1e-6)
         
-    elif class_idx == 1:  # left_chest_thrust_correct
-        # Chest thrust: Stick points FORWARD (slightly right/up from left hand)
-        # From left hand toward center/chest area
-        chest_target = np.array([img_width * 0.5, img_height * 0.4])  # Center chest
-        chest_direction = chest_target - selected_grip_px
-        chest_direction_norm = np.linalg.norm(chest_direction) + 1e-6
-        direction = chest_direction / chest_direction_norm
+    elif class_idx == 1:  # left_chest_thrust_correct - FORWARD THRUST
+        # Chest thrust: Direct forward thrust to center
+        # Arm extended forward toward opponent's chest
         
-    elif class_idx == 2:  # left_elbow_block_correct
-        # Elbow block: Stick is HORIZONTAL across body (defensive)
-        # From left hand toward right side
-        right_target = np.array([img_width * 0.7, selected_grip_px[1]])  # Right side, same height
-        block_direction = right_target - selected_grip_px
-        block_direction_norm = np.linalg.norm(block_direction) + 1e-6
-        direction = block_direction / block_direction_norm
-        # Ensure mostly horizontal (reduce vertical component)
-        direction[1] *= 0.3  # Dampen vertical
+        # Direction is primarily forearm extension
+        # For front view chest thrust, stick points toward center of image (opponent)
+        center_target = np.array([img_width * 0.5, img_height * 0.45])
+        center_vector = center_target - grip_px
+        center_dist = np.linalg.norm(center_vector) + 1e-6
+        center_unit = center_vector / center_dist
+        
+        # If arm is extended, trust forearm direction more
+        # If bent, blend toward center more
+        if is_extended:
+            direction = 0.7 * forearm_unit + 0.3 * center_unit
+        else:
+            direction = 0.5 * forearm_unit + 0.5 * center_unit
         direction = direction / (np.linalg.norm(direction) + 1e-6)
         
-    elif class_idx == 3:  # left_eye_thrust_correct
-        # Eye thrust: Stick points UP and RIGHT toward face
-        # From left hand toward nose/eye area
-        eye_target = nose + np.array([img_width * 0.05, -img_height * 0.1])  # Slightly right of nose
-        eye_direction = eye_target - selected_grip_px
-        eye_direction_norm = np.linalg.norm(eye_direction) + 1e-6
-        direction = eye_direction / eye_direction_norm
-        # Add upward bias
-        direction = 0.6 * direction + 0.4 * body_up
+    elif class_idx == 2:  # left_elbow_block_correct - HORIZONTAL BLOCK
+        # Elbow block: Stick held across body, blocking
+        # Arm is typically bent at elbow, stick perpendicular to arm
+        
+        # For blocks, stick is perpendicular to forearm (across the body)
+        # Rotate forearm 90 degrees
+        perp_direction = np.array([-forearm_unit[1], forearm_unit[0]])  # 90 degree rotation
+        
+        # Determine direction: for left arm block, stick typically extends to right
+        # Check which side of body the hand is on
+        hand_x_ratio = grip_px[0] / img_width
+        if hand_x_ratio < 0.5:  # Left side - block extends right
+            # Keep as is (perp_direction)
+            pass
+        else:  # Right side - block extends left
+            perp_direction = -perp_direction
+        
+        # Blend with slight forward component
+        forward_unit = np.array([0, -1])  # Up in image (toward opponent)
+        direction = 0.8 * perp_direction + 0.2 * forward_unit
+        direction = direction / (np.linalg.norm(direction) + 1e-6)
+        
+    elif class_idx == 3:  # left_eye_thrust_correct - UPWARD THRUST
+        # Eye thrust: Stick thrust upward toward face
+        # Similar to crown but less overhead, more forward-up
+        
+        # Weight toward nose/eye level
+        eye_target = nose + np.array([0, img_height * 0.05])  # Slightly below nose (eye level)
+        eye_vector = eye_target - grip_px
+        eye_dist = np.linalg.norm(eye_vector) + 1e-6
+        eye_unit = eye_vector / eye_dist
+        
+        # Blend forearm with eye direction
+        direction = 0.5 * forearm_unit + 0.5 * eye_unit
+        # Ensure upward component
+        direction[1] = min(direction[1], -0.1)
         direction = direction / (np.linalg.norm(direction) + 1e-6)
     
-    # Estimate tip position using class-specific direction
-    tip_px = selected_grip_px + direction * stick_px
+    else:
+        # Unknown class - use simple forearm extension
+        direction = forearm_unit
+    
+    # Estimate tip position
+    tip_px = grip_px + direction * stick_px
+    
+    # Ensure tip is within image bounds (with margin)
+    margin = 10  # pixels
+    tip_px[0] = np.clip(tip_px[0], margin, img_width - margin)
+    tip_px[1] = np.clip(tip_px[1], margin, img_height - margin)
     
     # Normalize back to [0,1]
-    grip_norm = [selected_grip_px[0] / img_width, selected_grip_px[1] / img_height]
+    grip_norm = [grip_px[0] / img_width, grip_px[1] / img_height]
     tip_norm = [tip_px[0] / img_width, tip_px[1] / img_height]
     
     return grip_norm, tip_norm
