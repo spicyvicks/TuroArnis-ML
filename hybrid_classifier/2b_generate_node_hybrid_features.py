@@ -245,28 +245,18 @@ def extract_raw_features(image_path, stick_detector, viewpoint=None, class_idx=N
             class_idx is not None and 
             class_idx in FRONT_VIEW_0_3_CLASSES):
             
-            # Try to estimate stick from pose (arm angles and body dynamics)
-            grip_norm, tip_norm = estimate_stick_from_pose(
-                kpts, 
-                w, h,
-                class_idx=class_idx
-            )
+            # For front view classes 0-3, use ZERO stick coordinates instead of estimation
+            # This keeps all 35 nodes but sets stick to (0,0,0,0) so model can ignore them
+            stick_grip = [0.0, 0.0, 0.0, 0.0]  # x, y, z, confidence = 0
+            stick_tip = [0.0, 0.0, 0.0, 0.0]
             
-            if grip_norm is not None:
-                # Successfully estimated from fingers
-                stick_grip = [grip_norm[0], grip_norm[1], 0.0, 0.5]  # z=0, confidence=0.5
-                stick_tip = [tip_norm[0], tip_norm[1], 0.0, 0.5]
-                
-                # Track fallback count
-                if class_idx in _fallback_counts:
-                    _fallback_counts[class_idx] += 1
-                
-                # Log periodically (every 10 samples)
-                if _fallback_counts[class_idx] % 10 == 1:
-                    print(f"[FRONT_0-3_FALLBACK] {image_path.name}: class={CLASS_NAMES[class_idx]}, count={_fallback_counts[class_idx]}")
-            else:
-                # No fingers visible either, skip this sample
-                return None
+            # Track zero-stick count
+            if class_idx in _fallback_counts:
+                _fallback_counts[class_idx] += 1
+            
+            # Log periodically (every 10 samples)
+            if _fallback_counts[class_idx] % 10 == 1:
+                print(f"[FRONT_0-3_ZERO_STICK] {image_path.name}: class={CLASS_NAMES[class_idx]}, count={_fallback_counts[class_idx]}")
         else:
             # Not front 0-3 or class_idx not provided, skip as before
             return None
@@ -639,22 +629,17 @@ def process_single_image(args):
     img_path, class_idx, viewpoint, templates, stick_detector = args
     
     try:
-        # Determine if we should include stick nodes for this sample
-        # For front view: exclude stick for classes 0-3 and 12 (neutral)
-        # These classes either have hard-to-detect sticks (0-3) or no stick (12)
-        FRONT_NO_STICK_CLASSES = [0, 1, 2, 3, 12]  # crown, left_chest, left_elbow, left_eye, neutral
-        include_stick = not (viewpoint == 'front' and class_idx in FRONT_NO_STICK_CLASSES)
-        
-        # Extract raw features (pass class_idx for front 0-3 fallback)
+        # Extract raw features (pass class_idx for front 0-3 improved stick estimation)
+        # All classes now include stick nodes with improved pose-based estimation for front 0-3
         raw_data = extract_raw_features(img_path, stick_detector, viewpoint=viewpoint, class_idx=class_idx)
         if raw_data is None:
             return None
         
-        # Extract node-specific features (33 or 35 nodes depending on class)
+        # Extract node-specific features (always 35 nodes: 33 pose + 2 stick)
         node_features = extract_node_features(
             raw_data['pose_keypoints'],
             raw_data['stick_keypoints'],
-            include_stick=include_stick
+            include_stick=True  # Always include stick nodes (improved estimation for all classes)
         )
         
         # Compute global hybrid features
@@ -671,7 +656,7 @@ def process_single_image(args):
             'hybrid_features': hybrid_features,
             'label': class_idx,
             'viewpoint': viewpoint,
-            'has_stick_nodes': include_stick  # Flag for model to know node count
+            'has_stick_nodes': True  # All samples have stick nodes
         }
     except Exception as e:
         print(f"Error processing {img_path}: {e}")
