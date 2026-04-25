@@ -1,0 +1,9 @@
+{
+  "_comment": "Per-class aspect ratio overrides. Class index -> aspect_ratio. Unlisted classes use group defaults.",
+  "aspect_ratios": {
+    "3": 0.9,
+    "4": 0.9,
+    "5": 0.9,
+    "6": 1.6
+  }
+}

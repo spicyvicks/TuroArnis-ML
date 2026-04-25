@@ -24,6 +24,7 @@ HORIZONTAL_FEATURES = {
     'tip_side', 'grip_side',
     'stick_dx', 'stick_angle',
     'foot_stagger',
+    'stick_right_of_center', 'r_wrist_vs_l_wrist_x',
 }
 
 CLASS_NAMES = [
@@ -356,6 +357,12 @@ def extract_geometric_features(image_path, apply_mirror=False):
     # Distances
     features['hands_distance'] = calculate_distance(kpts[15], kpts[16])
     features['stick_length'] = calculate_distance(stick_grip, stick_tip)
+    
+    # Engineered right-handedness features
+    # Stick is always held in right hand — these give the model a strong structural signal
+    features['stick_grip_to_r_wrist'] = calculate_distance(stick_grip, kpts[16])
+    features['stick_right_of_center'] = stick_tip[0] - root_x  # positive = right side
+    features['r_wrist_vs_l_wrist_x'] = kpts[16][0] - kpts[15][0]  # positive = right wrist is to the right
 
     # Apply horizontal mirror correction if requested
     if apply_mirror:

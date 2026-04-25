@@ -231,11 +231,23 @@ def extract_raw_features(image_path, stick_detector, viewpoint=None, class_idx=N
             # Normalize corrected endpoints
             stick_grip = [corrected_grip_px[0] / w, corrected_grip_px[1] / h, 0.0, stick_kpts[0, 2]]
             stick_tip = [corrected_tip_px[0] / w, corrected_tip_px[1] / h, 0.0, stick_kpts[1, 2]]
+            
+            # Determine which hand holds the stick (for dynamic graph edges)
+            grip_px = np.array(corrected_grip_px, dtype=float)
+            dist_to_r = np.linalg.norm(grip_px - np.array([kpts[16, 0] * w, kpts[16, 1] * h]))
+            dist_to_l = np.linalg.norm(grip_px - np.array([kpts[15, 0] * w, kpts[15, 1] * h]))
+            stick_right_hand = bool(dist_to_r < dist_to_l)
         except Exception as e:
             # Fallback to raw YOLO if correction fails
             print(f"Method 4 correction failed for {image_path}: {e}, using raw YOLO")
             stick_grip = [stick_kpts[0, 0] / w, stick_kpts[0, 1] / h, 0.0, stick_kpts[0, 2]]
             stick_tip = [stick_kpts[1, 0] / w, stick_kpts[1, 1] / h, 0.0, stick_kpts[1, 2]]
+            
+            # Determine which hand holds the stick (for dynamic graph edges)
+            grip_px = np.array(raw_grip_px, dtype=float)
+            dist_to_r = np.linalg.norm(grip_px - np.array([kpts[16, 0] * w, kpts[16, 1] * h]))
+            dist_to_l = np.linalg.norm(grip_px - np.array([kpts[15, 0] * w, kpts[15, 1] * h]))
+            stick_right_hand = bool(dist_to_r < dist_to_l)
     else:
         # No stick detected by YOLO
         # For front view classes 0-3, try finger fallback
@@ -249,6 +261,7 @@ def extract_raw_features(image_path, stick_detector, viewpoint=None, class_idx=N
             # This keeps all 35 nodes but sets stick to (0,0,0,0) so model can ignore them
             stick_grip = [0.0, 0.0, 0.0, 0.0]  # x, y, z, confidence = 0
             stick_tip = [0.0, 0.0, 0.0, 0.0]
+            stick_right_hand = True  # Default: stick is held in right hand
             
             # Track zero-stick count
             if class_idx in _fallback_counts:
@@ -339,10 +352,17 @@ def extract_raw_features(image_path, stick_detector, viewpoint=None, class_idx=N
     features['hands_distance'] = calculate_distance(kpts[15], kpts[16])
     features['stick_length'] = calculate_distance(stick_grip, stick_tip)
     
+    # Engineered right-handedness features
+    # Stick is always held in right hand — these give the model a strong structural signal
+    features['stick_grip_to_r_wrist'] = calculate_distance(stick_grip, kpts[16])
+    features['stick_right_of_center'] = stick_tip[0] - root_x  # positive = right side
+    features['r_wrist_vs_l_wrist_x'] = kpts[16][0] - kpts[15][0]  # positive = right wrist is to the right
+    
     return {
         'pose_keypoints': kpts,
         'stick_keypoints': stick_keypoints,
-        'global_features': features
+        'global_features': features,
+        'stick_right_hand': stick_right_hand
     }
 
 
@@ -410,6 +430,44 @@ def extract_node_features(pose_keypoints, stick_keypoints, include_stick=True):
         
         # Node feature: [x, y, z, vis, dist_to_hip_3d, angle_from_hip]
         node_features.append([x, y, z, vis, dist_to_hip, angle_from_hip])
+    
+    return np.array(node_features, dtype=np.float32)
+
+
+def extract_node_features_normalized(pose_keypoints, stick_keypoints, include_stick=True):
+    """
+    Extract person-invariant per-node features (Plan A).
+    Each node gets: [x, y, z, vis, rel_x_to_hip, rel_y_to_hip, rel_z_to_hip, shoulder_width]
+    
+    Coordinates are normalized by shoulder width so the model sees geometry ratios
+    rather than absolute person scale / camera distance.
+    
+    Args:
+        pose_keypoints: [33, 4] array of pose landmarks (x, y, z, visibility)
+        stick_keypoints: [2, 4] array of stick grip and tip (or None)
+        include_stick: Whether to include stick nodes (35 total) or just pose (33)
+    
+    Returns:
+        node_features: [N, 8] array
+    """
+    # Torso scale proxy: shoulder width in 3D
+    shoulder_width = np.linalg.norm(pose_keypoints[11, :3] - pose_keypoints[12, :3])
+    torso_scale = shoulder_width + 1e-8
+    
+    # Hip center for relative coordinates
+    hip_center = (pose_keypoints[23, :3] + pose_keypoints[24, :3]) / 2
+    
+    if include_stick and stick_keypoints is not None:
+        all_keypoints = np.vstack([pose_keypoints, stick_keypoints])
+    else:
+        all_keypoints = pose_keypoints
+    
+    node_features = []
+    for kpt in all_keypoints:
+        x, y, z, vis = kpt
+        # Person-invariant relative position w.r.t hip center, scaled by shoulder width
+        rel = (np.array([x, y, z]) - hip_center) / torso_scale
+        node_features.append([x, y, z, vis, rel[0], rel[1], rel[2], shoulder_width])
     
     return np.array(node_features, dtype=np.float32)
 
@@ -636,14 +694,14 @@ def process_single_image(args):
         if raw_data is None:
             return None
         
-        # Extract node-specific features (always 35 nodes: 33 pose + 2 stick)
-        node_features = extract_node_features(
+        # Extract node-specific features (Plan A: person-invariant normalized features)
+        node_features = extract_node_features_normalized(
             raw_data['pose_keypoints'],
             raw_data['stick_keypoints'],
             include_stick=True  # Always include stick nodes (improved estimation for all classes)
         )
         
-        # Compute global hybrid features
+        # Compute global hybrid features (kept for backward compatibility)
         class_name = CLASS_NAMES[class_idx]
         hybrid_features = compute_hybrid_features(
             raw_data['global_features'],
@@ -657,7 +715,8 @@ def process_single_image(args):
             'hybrid_features': hybrid_features,
             'label': class_idx,
             'viewpoint': viewpoint,
-            'has_stick_nodes': True  # All samples have stick nodes
+            'has_stick_nodes': True,  # All samples have stick nodes
+            'stick_right_hand': raw_data.get('stick_right_hand', True)
         }
     except Exception as e:
         print(f"Error processing {img_path}: {e}")
@@ -723,6 +782,7 @@ def process_dataset(viewpoint_filter=None, num_workers=None):
         labels_list = []
         viewpoints_list = []
         has_stick_mask = []  # Track which samples have real stick nodes
+        stick_right_hand_list = []  # Plan A: dynamic stick edges
         
         # First pass: find max nodes and pad if needed
         max_nodes = 0
@@ -745,10 +805,15 @@ def process_dataset(viewpoint_filter=None, num_workers=None):
             labels_list.append(result['label'])
             viewpoints_list.append(result['viewpoint'])
             has_stick_mask.append(has_stick)
+            stick_right_hand_list.append(result.get('stick_right_hand', True))
         
         # Print stats about node counts
         no_stick_count = sum(1 for h in has_stick_mask if not h)
         print(f"  - Samples without stick nodes: {no_stick_count}/{len(results)} ({100*no_stick_count/len(results):.1f}%)")
+        
+        # Print dynamic edge stats
+        right_hand_count = sum(stick_right_hand_list)
+        print(f"  - Stick in right hand: {right_hand_count}/{len(results)} ({100*right_hand_count/len(results):.1f}%)")
         
         # Save as PyTorch tensors
         data = {
@@ -756,7 +821,8 @@ def process_dataset(viewpoint_filter=None, num_workers=None):
             'hybrid_features': torch.tensor(np.array(hybrid_features_list), dtype=torch.float32),
             'labels': torch.tensor(labels_list, dtype=torch.long),
             'viewpoints': viewpoints_list,
-            'has_stick_nodes': torch.tensor(has_stick_mask, dtype=torch.bool)  # Mask for model
+            'has_stick_nodes': torch.tensor(has_stick_mask, dtype=torch.bool),  # Mask for model
+            'stick_right_hand': torch.tensor(stick_right_hand_list, dtype=torch.bool)  # Plan A: dynamic edges
         }
         
         suffix = f"_{viewpoint_filter}" if viewpoint_filter else ""
