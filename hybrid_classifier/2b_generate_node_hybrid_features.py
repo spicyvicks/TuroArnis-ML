@@ -685,7 +685,7 @@ def estimate_stick_from_pose(kpts, img_width, img_height, class_idx=None):
 
 def process_single_image(args):
     """Process a single image (for multiprocessing)"""
-    img_path, class_idx, viewpoint, templates, stick_detector = args
+    img_path, class_idx, viewpoint, templates, stick_detector, pure_gcn = args
     
     try:
         # Extract raw features (pass class_idx for front 0-3 improved stick estimation)
@@ -694,12 +694,21 @@ def process_single_image(args):
         if raw_data is None:
             return None
         
-        # Extract node-specific features (original 6-dim format for HybridGCN/4e)
-        node_features = extract_node_features(
-            raw_data['pose_keypoints'],
-            raw_data['stick_keypoints'],
-            include_stick=True  # Always include stick nodes (improved estimation for all classes)
-        )
+        # Extract node-specific features
+        if pure_gcn:
+            # Plan A: Person-normalized 8-dim features for PureGCN
+            node_features = extract_node_features_normalized(
+                raw_data['pose_keypoints'],
+                raw_data['stick_keypoints'],
+                include_stick=True
+            )
+        else:
+            # Standard 6-dim format for HybridGCN/4e
+            node_features = extract_node_features(
+                raw_data['pose_keypoints'],
+                raw_data['stick_keypoints'],
+                include_stick=True
+            )
         
         # Compute global hybrid features (kept for backward compatibility)
         class_name = CLASS_NAMES[class_idx]
@@ -723,13 +732,15 @@ def process_single_image(args):
         return None
 
 
-def process_dataset(viewpoint_filter=None, num_workers=None):
+def process_dataset(viewpoint_filter=None, num_workers=None, pure_gcn=False):
     """Process all images and generate node + hybrid features"""
     # Load templates
     with open(FEATURE_TEMPLATES, 'r') as f:
         templates = json.load(f)
     
     print(f"Loaded {len(templates)} feature templates")
+    if pure_gcn:
+        print("[MODE] PureGCN: Using person-normalized 8-dim node features")
     
     # Load stick detector once
     stick_detector = YOLO(STICK_MODEL)
@@ -763,7 +774,7 @@ def process_dataset(viewpoint_filter=None, num_workers=None):
                 images = list(class_dir.glob("*.jpg")) + list(class_dir.glob("*.png"))
                 
                 for img_path in images:
-                    all_tasks.append((img_path, class_idx, viewpoint, templates, stick_detector))
+                    all_tasks.append((img_path, class_idx, viewpoint, templates, stick_detector, pure_gcn))
         
         print(f"\nProcessing {split} set: {len(all_tasks)} images")
         
@@ -822,10 +833,12 @@ def process_dataset(viewpoint_filter=None, num_workers=None):
             'labels': torch.tensor(labels_list, dtype=torch.long),
             'viewpoints': viewpoints_list,
             'has_stick_nodes': torch.tensor(has_stick_mask, dtype=torch.bool),  # Mask for model
-            'stick_right_hand': torch.tensor(stick_right_hand_list, dtype=torch.bool)  # Plan A: dynamic edges
+            'stick_right_hand': torch.tensor(stick_right_hand_list, dtype=torch.bool),  # Plan A: dynamic edges
+            'pure_gcn': pure_gcn  # Feature mode flag
         }
         
         suffix = f"_{viewpoint_filter}" if viewpoint_filter else ""
+        suffix += "_pure_gcn" if pure_gcn else ""
         output_file = OUTPUT_DIR / f"{split}_features{suffix}.pt"
         torch.save(data, output_file)
         
@@ -843,6 +856,12 @@ if __name__ == "__main__":
                         help='Process only specific viewpoint (default: all)')
     parser.add_argument('--workers', type=int, default=None,
                         help='Number of worker processes (default: CPU count - 1)')
+    parser.add_argument('--pure_gcn', action='store_true',
+                        help='Use person-normalized node features (8-dim) for PureGCN instead of standard 6-dim')
     args = parser.parse_args()
     
-    process_dataset(args.viewpoint, args.workers)
+    # Set global flag for feature extraction mode
+    global _PURE_GCN_MODE
+    _PURE_GCN_MODE = args.pure_gcn
+    
+    process_dataset(args.viewpoint, args.workers, pure_gcn=args.pure_gcn)

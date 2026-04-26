@@ -515,15 +515,17 @@ def main():
         print("Error: --viewpoint is required (front, left, or right)")
         sys.exit(1)
 
-    # Paths
-    train_path = DATA_DIR / f"train_features_{viewpoint}.pt"
-    test_path = DATA_DIR / f"test_features_{viewpoint}.pt"
-
+    # Paths (look for PureGCN person-normalized features first)
+    train_path = DATA_DIR / f"train_features_{viewpoint}_pure_gcn.pt"
+    test_path = DATA_DIR / f"test_features_{viewpoint}_pure_gcn.pt"
+    
     if not train_path.exists():
-        print(f"Error: Train data not found: {train_path}")
+        print(f"Error: PureGCN train data not found: {train_path}")
+        print(f"Run: python hybrid_classifier/2b_generate_node_hybrid_features.py --viewpoint {viewpoint} --pure_gcn")
         sys.exit(1)
     if not test_path.exists():
-        print(f"Error: Test data not found: {test_path}")
+        print(f"Error: PureGCN test data not found: {test_path}")
+        print(f"Run: python hybrid_classifier/2b_generate_node_hybrid_features.py --viewpoint {viewpoint} --pure_gcn")
         sys.exit(1)
 
     print(f"\n=== PureGCN Training ===")
