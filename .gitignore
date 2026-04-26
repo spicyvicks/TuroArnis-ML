@@ -22,3 +22,4 @@ venv_gcn/
 dataset_graphs/
 runs/
 reference_poses/
+stick_test.jpg
