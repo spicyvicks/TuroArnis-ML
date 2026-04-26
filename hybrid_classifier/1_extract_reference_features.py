@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 # Config
 REFERENCE_DIR = Path("reference_poses")
-STICK_MODEL = "runs/pose/arnis_stick_detector/weights/best.pt"
+STICK_MODEL = "runs/pose/stick_detector_20260425_212025/weights/best.pt"
 OUTPUT_FILE = "hybrid_classifier/feature_templates.json"
 OUTPUT_FILE_MIRRORED = "hybrid_classifier/feature_templates_mirrored.json"
 
@@ -82,7 +82,7 @@ def mirror_features(features):
     return mirrored
 
 
-def validate_features(features, pose_landmarks, stick_detected, stick_confidence=1.0, viewpoint=None):
+def validate_features(features, pose_landmarks, stick_detected, stick_confidence=1.0, viewpoint=None, class_name=None):
     """
     Validate extracted features before including in template statistics.
     Returns (is_valid: bool, reason: str)
@@ -104,13 +104,13 @@ def validate_features(features, pose_landmarks, stick_detected, stick_confidence
     if wrist_vis_15 < MIN_VISIBILITY and wrist_vis_16 < MIN_VISIBILITY:
         return False, f"Both wrists low visibility (15:{wrist_vis_15:.2f}, 16:{wrist_vis_16:.2f} < {MIN_VISIBILITY})"
     
-    # Rule 2: YOLO stick detection check
-    if not stick_detected:
+    # Rule 2: YOLO stick detection check (skip for neutral — stick may be at rest/hidden)
+    if class_name != 'neutral' and not stick_detected:
         return False, "Stick not detected by YOLO"
     
-    # Rule 3: YOLO confidence check - ULTRA RELAXED
+    # Rule 3: YOLO confidence check - ULTRA RELAXED (skip for neutral)
     MIN_STICK_CONFIDENCE = 0.15  # ULTRA RELAXED: was 0.5 -> 0.35 -> 0.25 -> 0.15
-    if stick_confidence < MIN_STICK_CONFIDENCE:
+    if class_name != 'neutral' and stick_confidence < MIN_STICK_CONFIDENCE:
         return False, f"Low stick confidence ({stick_confidence:.2f} < {MIN_STICK_CONFIDENCE})"
     
     # Rule 4: Physical plausibility - reject zero or impossible stick length
@@ -424,7 +424,8 @@ def analyze_reference_images(viewpoint_filter=None, apply_mirror=False):
                     metadata['pose_landmarks'],
                     metadata['stick_detected'],
                     metadata['stick_confidence'],
-                    viewpoint=viewpoint
+                    viewpoint=viewpoint,
+                    class_name=class_name
                 )
                 
                 if not is_valid:

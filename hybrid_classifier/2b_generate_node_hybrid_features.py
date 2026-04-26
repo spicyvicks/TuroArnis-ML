@@ -20,7 +20,7 @@ from functools import partial
 FEATURE_TEMPLATES = "hybrid_classifier/feature_templates.json"
 DATASET_ROOT = Path("dataset_split")
 OUTPUT_DIR = Path("hybrid_classifier/hybrid_features_v3")
-STICK_MODEL = "runs/pose/arnis_stick_detector/weights/best.pt"
+STICK_MODEL = "runs/pose/stick_detector_20260425_212025/weights/best.pt"
 
 CLASS_NAMES = [
     'crown_thrust_correct', 'left_chest_thrust_correct', 'left_elbow_block_correct',
@@ -694,8 +694,8 @@ def process_single_image(args):
         if raw_data is None:
             return None
         
-        # Extract node-specific features (Plan A: person-invariant normalized features)
-        node_features = extract_node_features_normalized(
+        # Extract node-specific features (original 6-dim format for HybridGCN/4e)
+        node_features = extract_node_features(
             raw_data['pose_keypoints'],
             raw_data['stick_keypoints'],
             include_stick=True  # Always include stick nodes (improved estimation for all classes)
