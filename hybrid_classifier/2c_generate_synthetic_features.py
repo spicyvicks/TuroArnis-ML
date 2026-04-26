@@ -150,24 +150,27 @@ def check_stick_length(node_features):
     return 0.3 <= ratio <= 2.5
 
 
-def apply_joint_perturbation(node_features, sigma=0.02, seed=None):
+def apply_joint_perturbation(node_features, sigma=0.02, seed=None, stick_right_hand=True):
     """Add Gaussian noise to arm joints + stick.
     
-    CONSTRAINT: Stick is always held in right hand.
-    - Perturb right arm joints (12, 14, 16) independently
-    - After perturbing right wrist (16), reattach stick grip (33) to maintain
-      relative offset from right wrist
-    - Perturb stick tip (34) relative to grip to preserve stick direction/length
+    Uses stick_right_hand metadata to reattach stick to the correct hand:
+    - If stick_right_hand=True (default): reattach to right wrist (node 16)
+    - If stick_right_hand=False: reattach to left wrist (node 15)
+    
+    This preserves the structural prior that the model learns from real data.
     """
     if seed is not None:
         np.random.seed(seed)
     perturbed = node_features.copy()
     
-    # Record original stick-to-right-wrist relationship
-    original_right_wrist = node_features[16, :3].copy()
+    # Determine which hand holds the stick
+    wrist_node = 16 if stick_right_hand else 15
+    
+    # Record original stick-to-wrist relationship
+    original_wrist = node_features[wrist_node, :3].copy()
     original_stick_grip = node_features[33, :3].copy()
     original_stick_tip = node_features[34, :3].copy()
-    grip_to_wrist = original_stick_grip - original_right_wrist
+    grip_to_wrist = original_stick_grip - original_wrist
     tip_to_grip = original_stick_tip - original_stick_grip
     
     # Perturb all arm joints independently
@@ -175,9 +178,9 @@ def apply_joint_perturbation(node_features, sigma=0.02, seed=None):
         noise = np.random.normal(0, sigma, size=3)
         perturbed[joint, :3] += noise
     
-    # Reattach stick grip to perturbed right wrist (maintain relative offset)
-    perturbed_right_wrist = perturbed[16, :3]
-    perturbed[33, :3] = perturbed_right_wrist + grip_to_wrist
+    # Reattach stick grip to perturbed wrist (maintain relative offset)
+    perturbed_wrist = perturbed[wrist_node, :3]
+    perturbed[33, :3] = perturbed_wrist + grip_to_wrist
     
     # Perturb stick tip relative to grip (small noise on direction, preserve length)
     tip_noise = np.random.normal(0, sigma * 0.5, size=3)
@@ -235,6 +238,7 @@ def generate_train_synthetics(data, factor=2, sigma=0.02):
     labels = data['labels'].numpy()  # [N]
     viewpoints = data.get('viewpoints', ['front'] * len(labels))
     has_stick_nodes = data.get('has_stick_nodes', torch.ones(len(labels), dtype=torch.bool)).numpy()
+    stick_right_hand = data.get('stick_right_hand', torch.ones(len(labels), dtype=torch.bool)).numpy()
 
     synthetic_nodes = []
     synthetic_hybrid = []
@@ -272,8 +276,11 @@ def generate_train_synthetics(data, factor=2, sigma=0.02):
                 blended_node = mixup_nodes(real_node, nn_node, lam)
                 blended_hybrid = lam * real_hybrid + (1.0 - lam) * nn_hybrid
 
-                # Apply arm perturbation
-                blended_node = apply_joint_perturbation(blended_node, sigma=sigma)
+                # Apply arm perturbation (respecting stick handedness)
+                blended_node = apply_joint_perturbation(
+                    blended_node, sigma=sigma,
+                    stick_right_hand=bool(stick_right_hand[real_idx])
+                )
 
                 # Recompute dependent features (dist_to_hip, angle_from_hip)
                 blended_node = recompute_node_features(blended_node)
@@ -329,6 +336,7 @@ def generate_test_synthetics(data, factor=1, sigma=0.02):
     labels = data['labels'].numpy()
     viewpoints = data.get('viewpoints', ['front'] * len(labels))
     has_stick_nodes = data.get('has_stick_nodes', torch.ones(len(labels), dtype=torch.bool)).numpy()
+    stick_right_hand = data.get('stick_right_hand', torch.ones(len(labels), dtype=torch.bool)).numpy()
 
     synthetic_nodes = []
     synthetic_hybrid = []
@@ -353,8 +361,12 @@ def generate_test_synthetics(data, factor=1, sigma=0.02):
             real_hybrid = hybrid_features[real_idx]
 
             for syn_num in range(factor):
-                # Only perturbation, no mixup
-                perturbed_node = apply_joint_perturbation(real_node.copy(), sigma=sigma, seed=real_idx + syn_num * 1000)
+                # Only perturbation, no mixup (respecting stick handedness)
+                perturbed_node = apply_joint_perturbation(
+                    real_node.copy(), sigma=sigma,
+                    seed=real_idx + syn_num * 1000,
+                    stick_right_hand=bool(stick_right_hand[real_idx])
+                )
                 perturbed_node = recompute_node_features(perturbed_node)
 
                 # Hybrid features: small noise

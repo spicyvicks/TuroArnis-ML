@@ -115,8 +115,9 @@ def validate_features(features, pose_landmarks, stick_detected, stick_confidence
     
     # Rule 4: Physical plausibility - reject zero or impossible stick length
     # ULTRA RELAXED: allow very small detections, only reject true zeros/NaN
+    # SKIP for neutral: stick may be at rest, hidden, or not in frame
     stick_len = features.get('stick_length', 0)
-    if stick_len == 0 or np.isnan(stick_len):
+    if class_name != 'neutral' and (stick_len == 0 or np.isnan(stick_len)):
         return False, f"Zero or NaN stick length ({stick_len})"
     
     # Rule 5: Sanity check on angles (reject impossible values)
@@ -447,6 +448,23 @@ def analyze_reference_images(viewpoint_filter=None, apply_mirror=False):
             if len(all_features) == 0:
                 print(f"  Warning: No valid features extracted")
                 continue
+            
+            # Option C: For neutral class, strip stick-dependent features from templates
+            # Neutral = "no active technique"; stick position does not define the class
+            if class_name == 'neutral':
+                STICK_FEATURES = [
+                    'stick_tip_height', 'stick_grip_height',
+                    'stick_tip_x', 'stick_grip_x',
+                    'stick_angle', 'stick_dx', 'stick_dy',
+                    'tip_vs_nose', 'tip_vs_shoulder', 'tip_vs_hip',
+                    'tip_side', 'grip_side',
+                    'stick_length', 'stick_grip_to_r_wrist',
+                    'stick_right_of_center'
+                ]
+                for feat_dict in all_features:
+                    for sf in STICK_FEATURES:
+                        feat_dict.pop(sf, None)
+                print(f"  [INFO] Stripped {len(STICK_FEATURES)} stick features from neutral template")
             
             # Compute mean and std for each feature
             feature_stats = {}

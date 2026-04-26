@@ -307,6 +307,8 @@ def load_combined_dataset(real_path, synthetic_path, viewpoint=None):
             raise ValueError(f"Synthetic data missing key: {key}")
 
     # Combine tensors
+    real_stick_hand = real_data.get('stick_right_hand', torch.ones(len(real_data['labels']), dtype=torch.bool))
+    syn_stick_hand = syn_data.get('stick_right_hand', torch.ones(len(syn_data['labels']), dtype=torch.bool))
     combined = {
         'node_features': torch.cat([real_data['node_features'], syn_data['node_features']]),
         'hybrid_features': torch.cat([real_data['hybrid_features'], syn_data['hybrid_features']]),
@@ -321,6 +323,7 @@ def load_combined_dataset(real_path, synthetic_path, viewpoint=None):
             torch.zeros(len(real_data['labels']), dtype=torch.bool),
             syn_data.get('is_synthetic', torch.ones(len(syn_data['labels']), dtype=torch.bool))
         ]),
+        'stick_right_hand': torch.cat([real_stick_hand, syn_stick_hand]),
     }
 
     # Save combined for potential reuse
