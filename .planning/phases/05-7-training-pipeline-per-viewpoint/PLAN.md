@@ -375,6 +375,38 @@ BATCH_SIZE = 32        # Smaller batches
 | One viewpoint underperforms | Deploy 2/3 models with viewpoint detection fallback |
 | All viewpoints <70% | Investigate feature quality, consider Random Forest baseline |
 | Training takes >30 min per model | Accept longer time, don't reduce epochs |
+| Horizontal flipping breaks side classes | **Remove flipping** or **merge left/right_side** into single class. See Session Notes below. |
+
+## Session Notes (2026-04-26)
+
+### Synthetic Data Investigation Breakthrough
+
+During front model training, we discovered that **horizontal flipping augmentation is the root cause of `stick_left_side` and `stick_right_side` class failures** (0% and 6.7% real-only test accuracy). This does NOT affect other left/right pairs (arm/shoulder/leg/hand) because body pose joints provide disambiguation cues that side-positioned sticks lack.
+
+### Current Front Model State
+- **4e with 3x synthetic (fixed generator):** 54.3% val / 56.6% real-only test
+- **Prior baseline (no synthetic):** 39.4% val
+- **Prior buggy 3x (forced right-hand):** 52.5% val
+- **Best ever (old model, 5x buggy):** 57.6% val
+
+### Three Options on the Table
+
+1. **Remove horizontal flipping entirely**
+   - Side classes should improve dramatically
+   - Risk: lose ~50% augmentation, may overfit more
+   - May need to add rotation/scale/brightness augmentation instead
+
+2. **Merge `stick_left_side` + `stick_right_side` into single `stick_side` class**
+   - Reduces to 12 classes
+   - Side classes no longer need left/right discrimination
+   - May improve overall accuracy since model stops trying to learn impossible distinction
+
+3. **Keep as-is**
+   - Accept ~0% side class accuracy
+   - Overall accuracy ~56% (still better than baseline 39%)
+   - Proceed to left/right viewpoint models
+
+**Next session: User must decide which option, then retrain front model accordingly before proceeding to left/right viewpoints.**
 
 ---
 
@@ -410,17 +442,26 @@ BATCH_SIZE = 32        # Smaller batches
 
 | Task | Status | Commit | Accuracy |
 |------|--------|--------|----------|
-| Task 1: Reset Config | ⏳ PENDING | - | - |
-| Task 2: Front Features | ⏳ PENDING | - | - |
+| Task 1: Reset Config | ✅ DONE | - | - |
+| Task 2: Front Features | ✅ DONE | - | - |
 | Task 3: Left Features | ⏳ PENDING | - | - |
 | Task 4: Right Features | ⏳ PENDING | - | - |
-| Task 5: Front Model | ⏳ PENDING | - | - |
+| Task 5: Front Model | 🔄 INVESTIGATING | - | **54.3% val / 56.6% real-only** |
 | Task 6: Left Model | ⏳ PENDING | - | - |
 | Task 7: Right Model | ⏳ PENDING | - | - |
 | Task 8: Verify 70%+ | ⏳ PENDING | - | - |
 | Task 9: Deploy | ⏳ PENDING | - | - |
 | Task 10: Integration | ⏳ PENDING | - | - |
 
-**Last Updated:** 2026-04-22  
+**Notes on Task 5 (Front Model):**
+- Evolved into 4e synthetic-augmentation investigation (not original 4c per-viewpoint plan)
+- Upgraded stick detector (mAP50=0.946), regenerated templates (39, 100% neutral acceptance)
+- Fixed synthetic generator `stick_right_hand` bug
+- Trained with 3x synthetic: 54.3% val (mixed) / 56.6% real-only test
+- **Key blocker identified:** Horizontal flipping makes `stick_left_side` (6.7%) and `stick_right_side` (0%) unlearnable
+- Train-real gap: ~29 points (86% train vs 56.6% real-only) — overfitting to synthetic distribution
+- User paused to decide on flipping strategy (3 options: remove, merge side classes, keep as-is)
+
+**Last Updated:** 2026-04-26  
 **Started By:** Phase 5.7 Per-Viewpoint Pivot  
-**Context:** Merged model failed (9-37% accuracy), pivoting to per-viewpoint training
+**Context:** Merged model failed (9-37% accuracy), pivoting to per-viewpoint training. Front model investigation in progress — side class flipping blocker needs resolution before proceeding.

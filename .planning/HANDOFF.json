@@ -1,0 +1,53 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-04-26T11:57:37.374Z",
+  "phase": "05-7",
+  "phase_name": "training-pipeline-per-viewpoint",
+  "phase_dir": ".planning/phases/05-7-training-pipeline-per-viewpoint",
+  "plan": 1,
+  "task": 5,
+  "total_tasks": 10,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": 1, "name": "Reset training script config", "status": "done", "commit": "n/a", "note": "Evolved into 4e synthetic approach instead of 4c per-viewpoint"},
+    {"id": 2, "name": "Upgrade stick detector", "status": "done", "commit": "a4df331", "note": "New YOLO model 20260425_212025, mAP50=0.946"},
+    {"id": 3, "name": "Regenerate feature templates", "status": "done", "commit": "n/a", "note": "39 templates, 100% neutral acceptance, stripped 14 stick features from neutral"},
+    {"id": 4, "name": "Regenerate front viewpoint features", "status": "done", "commit": "n/a", "note": "2153 train / 198 test samples"},
+    {"id": 5, "name": "Fix synthetic generator + train 4e with 3x synthetic", "status": "in_progress", "progress": "Fixed stick_right_hand bug, trained to 54.3% val / 56.6% real-only. Identified flipping as root cause of side class failures."}
+  ],
+  "remaining_tasks": [
+    {"id": 5, "name": "Decide flipping strategy", "status": "not_started", "note": "Remove flipping? Merge side classes? Keep as-is?"},
+    {"id": 6, "name": "Retrain with chosen strategy", "status": "not_started"},
+    {"id": 7, "name": "Train left viewpoint model", "status": "not_started"},
+    {"id": 8, "name": "Train right viewpoint model", "status": "not_started"},
+    {"id": 9, "name": "Verify all models 70%+", "status": "not_started"},
+    {"id": 10, "name": "Deploy to TuroArnis", "status": "not_started"}
+  ],
+  "blockers": [
+    {"description": "Horizontal flipping augmentation makes left/right side classes (stick_left_side, stick_right_side) impossible to learn. stick_left_side: 6.7% accuracy, stick_right_side: 0% accuracy on real-only test. Other left/right pairs unaffected because body pose provides disambiguation.", "type": "technical", "workaround": "Remove flipping augmentation, or merge side classes into single 'stick_side' class, or accept 0% side class accuracy"},
+    {"description": "Synthetic 3x training data causes ~29 point train-val gap (86% train vs 56.6% real-only test). Model overfits to synthetic perturbation artifacts.", "type": "technical", "workaround": "Reduce synthetic ratio to 1x or 2x, or add stronger regularization"}
+  ],
+  "human_actions_pending": [],
+  "decisions": [
+    {"decision": "Keep hybrid MLP branch (4e) instead of PureGCN/Plan A", "rationale": "User explicitly chose to keep hybrid MLP branch", "phase": "05-7"},
+    {"decision": "Fix synthetic generator to respect stick_right_hand metadata", "rationale": "Prior buggy generator hardcoded all sticks to right hand (node 16), ignoring left-hand techniques. Fixed to read metadata and attach to correct hand (node 15 or 16).", "phase": "05-7"},
+    {"decision": "Use static graph edges (no dynamic edges)", "rationale": "Flipping augmentation makes handedness detection unreliable at graph construction time", "phase": "05-7"},
+    {"decision": "No mixup between left/right mirrored pairs", "rationale": "Would further confuse left/right discrimination", "phase": "05-7"},
+    {"decision": "Evaluate on real-only test to see true generalization", "rationale": "Synthetic test data slightly depresses reported accuracy (54.3% mixed vs 56.6% real-only)", "phase": "05-7"}
+  ],
+  "uncommitted_files": [
+    "hybrid_classifier/evaluate_real_only.py",
+    "hybrid_classifier/hybrid_features_v3/combined_synthetic_train_features_front_3x.pt",
+    "hybrid_classifier/hybrid_features_v3/synthetic_train_features_front_3x.pt",
+    "hybrid_classifier/1_extract_reference_features.py",
+    "hybrid_classifier/2c_generate_synthetic_features.py",
+    "hybrid_classifier/4e_train_hybrid_gcn_v2_with_synthetic.py",
+    "hybrid_classifier/feature_templates.json",
+    "hybrid_classifier/hybrid_features_v3/combined_synthetic_test_features_front_1x.pt",
+    "hybrid_classifier/hybrid_features_v3/synthetic_test_features_front_1x.pt",
+    "hybrid_classifier/hybrid_features_v3/test_features_front.pt",
+    "hybrid_classifier/hybrid_features_v3/train_features_front.pt"
+  ],
+  "next_action": "Decide on horizontal flipping strategy for side classes. Options: (1) Remove flipping entirely, (2) Merge left_side + right_side into single 'stick_side' class, (3) Keep as-is and accept ~0% side class accuracy. Then retrain front model accordingly.",
+  "context_notes": "User was investigating why 4e synthetic training (fixed generator) produced 54.3% vs prior buggy 52.5%. Real-only test evaluation revealed 56.6% true accuracy. Root cause analysis identified horizontal flipping as the reason left/right side classes fail completely. User wants to pause here and keep all three options listed for next session. Original Phase 5.7 goal (per-viewpoint 70%+ models) still pending — current work is a sub-investigation into synthetic augmentation and feature quality before returning to per-viewpoint training."
+}
