@@ -43,7 +43,9 @@ CLASS_NAMES = [
 NUM_CLASSES = len(CLASS_NAMES)
 
 # Joint indices for perturbation (arms + stick only)
-ARM_JOINTS = [11, 12, 13, 14, 15, 16, 33, 34]
+# Perturb arm joints + stick + lower body (stance diversity for synthetic training)
+# Added knees (25, 26) and ankles (27, 28) to create varied stances per synthetic sample
+ARM_JOINTS = [11, 12, 13, 14, 15, 16, 25, 26, 27, 28, 33, 34]
 # Leg joints for knee angle check
 KNEE_JOINTS = {
     'left': (23, 25, 27),
