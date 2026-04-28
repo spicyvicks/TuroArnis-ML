@@ -38,6 +38,17 @@ CLASS_NAMES = [
 
 VIEWPOINTS = ['front', 'left', 'right']
 
+# Classes where front-view stick detection often fails (end-on stick).
+# For these classes, when YOLO stick is missing we use zero-stick fallback
+# so the image is still accepted for template statistics.
+FRONT_ZERO_STICK_CLASSES = {
+    'crown_thrust_correct',
+    'left_chest_thrust_correct',
+    'left_elbow_block_correct',
+    'left_eye_thrust_correct',
+    'neutral'
+}
+
 # Initialize detectors
 mp_pose = mp.solutions.pose
 pose_detector = mp_pose.Pose(static_image_mode=True, model_complexity=2)
@@ -82,43 +93,43 @@ def mirror_features(features):
     return mirrored
 
 
-def validate_features(features, pose_landmarks, stick_detected, stick_confidence=1.0, viewpoint=None, class_name=None):
+def validate_features(features, pose_landmarks, stick_detected, stick_confidence=1.0, viewpoint=None, class_name=None, is_zero_stick_fallback=False):
     """
     Validate extracted features before including in template statistics.
     Returns (is_valid: bool, reason: str)
     
     Issue #2: Quality validation gates to prevent corrupted templates.
     Viewpoint-aware: Adjusts critical joints based on expected occlusion patterns.
+    
+    v2 changes:
+    - Allows zero-stick fallback for front classes where stick is end-on (crown,
+      left_chest, left_elbow, left_eye, neutral).
+    - Returns detailed rejection reason for _rejection_reasons tracking.
     """
     # Rule 1: MediaPipe critical joint visibility check - ULTRA RELAXED
     # For martial arts poses, only wrists [15, 16] are critical
-    # These are the key joints for stick grip detection
     # NOTE: Lowered to 0.1 to handle poor lighting/occlusion in reference images
-    CRITICAL_JOINTS = [15, 16]  # Wrists only - key for martial arts stick detection
-    
-    MIN_VISIBILITY = 0.1  # ULTRA RELAXED: was 0.5 -> 0.4 -> 0.1
-    
-    # Check critical wrist joints - at least ONE wrist must be visible
     wrist_vis_15 = pose_landmarks.landmark[15].visibility
     wrist_vis_16 = pose_landmarks.landmark[16].visibility
+    MIN_VISIBILITY = 0.1
     if wrist_vis_15 < MIN_VISIBILITY and wrist_vis_16 < MIN_VISIBILITY:
-        return False, f"Both wrists low visibility (15:{wrist_vis_15:.2f}, 16:{wrist_vis_16:.2f} < {MIN_VISIBILITY})"
+        return False, f"both_wrists_low_vis(15:{wrist_vis_15:.2f},16:{wrist_vis_16:.2f})"
     
-    # Rule 2: YOLO stick detection check (skip for neutral — stick may be at rest/hidden)
-    if class_name != 'neutral' and not stick_detected:
-        return False, "Stick not detected by YOLO"
+    # Rule 2: YOLO stick detection check
+    # v2: Allow zero-stick fallback for designated front classes
+    if not stick_detected and not is_zero_stick_fallback:
+        return False, "stick_not_detected"
     
-    # Rule 3: YOLO confidence check - ULTRA RELAXED (skip for neutral)
-    MIN_STICK_CONFIDENCE = 0.15  # ULTRA RELAXED: was 0.5 -> 0.35 -> 0.25 -> 0.15
-    if class_name != 'neutral' and stick_confidence < MIN_STICK_CONFIDENCE:
-        return False, f"Low stick confidence ({stick_confidence:.2f} < {MIN_STICK_CONFIDENCE})"
+    # Rule 3: YOLO confidence check - ULTRA RELAXED (skip for zero-stick fallback)
+    MIN_STICK_CONFIDENCE = 0.15
+    if not is_zero_stick_fallback and stick_confidence < MIN_STICK_CONFIDENCE:
+        return False, f"low_stick_conf({stick_confidence:.2f}<{MIN_STICK_CONFIDENCE})"
     
     # Rule 4: Physical plausibility - reject zero or impossible stick length
-    # ULTRA RELAXED: allow very small detections, only reject true zeros/NaN
-    # SKIP for neutral: stick may be at rest, hidden, or not in frame
+    # v2: Skip for zero-stick fallback — length is intentionally zero
     stick_len = features.get('stick_length', 0)
-    if class_name != 'neutral' and (stick_len == 0 or np.isnan(stick_len)):
-        return False, f"Zero or NaN stick length ({stick_len})"
+    if not is_zero_stick_fallback and (stick_len == 0 or np.isnan(stick_len)):
+        return False, f"zero_or_nan_stick_len({stick_len})"
     
     # Rule 5: Sanity check on angles (reject impossible values)
     ANGLE_FEATURES = [
@@ -129,11 +140,10 @@ def validate_features(features, pose_landmarks, stick_detected, stick_confidence
     
     for angle_name in ANGLE_FEATURES:
         angle_val = features.get(angle_name, 0)
-        # Human joints can't be < 0 or > 180 (fully bent/extended)
         if angle_val < 0 or angle_val > 180 or np.isnan(angle_val):
-            return False, f"Impossible {angle_name}: {angle_val:.1f}°"
+            return False, f"impossible_{angle_name}({angle_val:.1f}deg)"
     
-    return True, "Valid"
+    return True, "valid"
 
 
 def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img_height, world_landmarks, viewpoint=None):
@@ -220,9 +230,15 @@ def apply_stick_method4_correction(raw_grip_px, raw_tip_px, kpts, img_width, img
     return tuple(grip_px), tuple(corrected_tip_px)
 
 
-def extract_geometric_features(image_path, apply_mirror=False):
+def extract_geometric_features(image_path, apply_mirror=False, class_name=None, viewpoint=None):
     """Extract all geometric features from a single image.
     If apply_mirror=True, negate horizontal features (simulates a flipped image).
+    
+    v2 changes:
+    - Accepts class_name and viewpoint for zero-stick fallback logic.
+    - For designated front classes (crown, left_chest, left_elbow, left_eye, neutral)
+      where YOLO fails, uses zero-stick coordinates instead of NaN so the image
+      is still accepted for template statistics.
     """
     img = cv2.imread(str(image_path))
     if img is None:
@@ -243,12 +259,23 @@ def extract_geometric_features(image_path, apply_mirror=False):
         kpts.append([lm.x, lm.y, lm.visibility])
     kpts = np.array(kpts)
     
+    # Determine if this class qualifies for zero-stick fallback
+    is_zero_stick_fallback = (
+        viewpoint == 'front' and
+        class_name in FRONT_ZERO_STICK_CLASSES
+    )
+    
     # Extract stick with Method 4 correction
     stick_results = stick_detector(str(image_path), verbose=False)[0]
+    stick_detected = False
+    stick_confidence = 0.0
+    
     if stick_results.keypoints is not None and len(stick_results.keypoints.data) > 0:
         stick_kpts = stick_results.keypoints.data[0].cpu().numpy()
         raw_grip_px = np.array([stick_kpts[0, 0], stick_kpts[0, 1]])
         raw_tip_px = np.array([stick_kpts[1, 0], stick_kpts[1, 1]])
+        stick_detected = True
+        stick_confidence = float(stick_kpts[0, 2])  # grip confidence
         
         # Apply Method 4 correction
         try:
@@ -263,11 +290,17 @@ def extract_geometric_features(image_path, apply_mirror=False):
             stick_grip = [stick_kpts[0, 0] / w, stick_kpts[0, 1] / h]
             stick_tip = [stick_kpts[1, 0] / w, stick_kpts[1, 1] / h]
     else:
-        # Issue #5: Use NaN sentinel instead of [0.5, 0.5] fallback
-        # This allows validation gate to properly reject failed detections
-        stick_grip = [float('nan'), float('nan')]
-        stick_tip = [float('nan'), float('nan')]
-        stick_confidence = 0.0
+        # v2: Zero-stick fallback for designated front classes
+        if is_zero_stick_fallback:
+            stick_grip = [0.0, 0.0]
+            stick_tip = [0.0, 0.0]
+            stick_detected = True  # Mark as detected so validation accepts it
+            stick_confidence = 0.0
+        else:
+            # Issue #5: Use NaN sentinel for non-fallback classes
+            stick_grip = [float('nan'), float('nan')]
+            stick_tip = [float('nan'), float('nan')]
+            stick_confidence = 0.0
     
     # Compute features
     features = {}
@@ -401,16 +434,40 @@ def extract_geometric_features(image_path, apply_mirror=False):
         features['stick_forearm_dot'] = np.dot(forearm_vec / forearm_len, stick_vec_2d / stick_len_2d)
     else:
         features['stick_forearm_dot'] = 0.5
+    
+    # === EXPANDED SIGNED DIRECTION FEATURES (Path A v5) ===
+    # These explicitly separate chest/eye/crown/elbow-block clusters.
+    
+    # 7. Tip height vs nose (positive = above nose, negative = below)
+    features['tip_vs_nose_signed'] = (stick_tip[1] - nose_y) / shoulder_width
+    
+    # 8. Tip height vs shoulder (positive = above shoulder, negative = below)
+    features['tip_vs_shoulder_signed'] = (stick_tip[1] - shoulder_y) / shoulder_width
+    
+    # 9. Left elbow angle (normalized to [0, 1])
+    features['left_elbow_angle_signed'] = features['left_elbow_angle'] / 180.0
+    
+    # 10. Right elbow angle (normalized to [0, 1])
+    features['right_elbow_angle_signed'] = features['right_elbow_angle'] / 180.0
+    
+    # 11. Stick angle (normalized to [-1, 1])
+    features['stick_angle_signed'] = features['stick_angle'] / 180.0
+    
+    # 12. Right wrist height — person-normalized, preserves absolute height ordering
+    # Crown (>0.5) > Eye (~0.4) > Chest (~0.3) > Elbow block (~0.2) > Neutral (~0.0)
+    features['right_wrist_height_signed'] = features['right_wrist_height'] / shoulder_width
 
     # Apply horizontal mirror correction if requested
     if apply_mirror:
         features = mirror_features(features)
 
     # Return features with metadata for validation gate
+    # v2: Use the already-computed stick_detected (includes zero-stick fallback)
     metadata = {
         'pose_landmarks': results.pose_landmarks,
-        'stick_detected': stick_results.keypoints is not None and len(stick_results.keypoints.data) > 0,
-        'stick_confidence': stick_confidence if 'stick_confidence' in locals() else (stick_kpts[0, 2] if 'stick_kpts' in locals() else 0.0)
+        'stick_detected': stick_detected,
+        'stick_confidence': stick_confidence,
+        'is_zero_stick_fallback': is_zero_stick_fallback
     }
     
     return features, metadata
@@ -420,8 +477,14 @@ def analyze_reference_images(viewpoint_filter=None, apply_mirror=False):
     """Analyze all reference images and compute feature statistics.
     If apply_mirror=True, negate horizontal features on all images (simulates
     a horizontally-flipped camera) and saves to feature_templates_mirrored.json.
+    
+    v2 changes:
+    - Passes class_name and viewpoint to extract_geometric_features for zero-stick fallback.
+    - Tracks rejection reasons per class.
+    - Stores _count, _acceptance_rate, and _rejection_reasons in each template.
     """
     templates = {}
+    from collections import Counter
 
     viewpoints = [viewpoint_filter] if viewpoint_filter else VIEWPOINTS
     
@@ -444,50 +507,70 @@ def analyze_reference_images(viewpoint_filter=None, apply_mirror=False):
             all_features = []
             rejected_count = 0
             total_count = 0
+            rejection_reasons = Counter()
             
             for img_path in tqdm(images, desc=f"{viewpoint}/{class_name}", leave=False):
                 total_count += 1
-                result = extract_geometric_features(img_path, apply_mirror=apply_mirror)
+                result = extract_geometric_features(
+                    img_path,
+                    apply_mirror=apply_mirror,
+                    class_name=class_name,
+                    viewpoint=viewpoint
+                )
                 
                 if result is None:
                     rejected_count += 1
+                    rejection_reasons['pose_detection_failed'] += 1
                     continue
                 
                 features, metadata = result
                 
-                # Issue #2: Apply validation gate before accepting into templates
-                # Pass viewpoint for viewpoint-aware validation (e.g., side views have occluded arms)
+                # v2: Pass is_zero_stick_fallback flag from metadata
+                is_zero_stick_fallback = metadata.get('is_zero_stick_fallback', False)
+                
                 is_valid, reason = validate_features(
                     features,
                     metadata['pose_landmarks'],
                     metadata['stick_detected'],
                     metadata['stick_confidence'],
                     viewpoint=viewpoint,
-                    class_name=class_name
+                    class_name=class_name,
+                    is_zero_stick_fallback=is_zero_stick_fallback
                 )
                 
                 if not is_valid:
                     rejected_count += 1
+                    rejection_reasons[reason] += 1
                     print(f"  [REJECTED] {img_path.name}: {reason}")
                     continue
                 
                 all_features.append(features)
             
-            print(f"  Accepted: {len(all_features)}/{total_count} ({100*len(all_features)/total_count:.1f}%)")
+            acceptance_rate = len(all_features) / total_count if total_count > 0 else 0.0
+            print(f"  Accepted: {len(all_features)}/{total_count} ({100*acceptance_rate:.1f}%)")
             print(f"  Rejected: {rejected_count}/{total_count}")
+            if rejection_reasons:
+                print(f"  Rejection breakdown: {dict(rejection_reasons)}")
             
-            # Issue #2: Warn if acceptance rate is too low
-            MIN_ACCEPTANCE_RATE = 0.50  # 50%
-            if len(all_features) / total_count < MIN_ACCEPTANCE_RATE:
-                print(f"  WARNING: Low acceptance rate! Expected >{MIN_ACCEPTANCE_RATE*100:.0f}%, "
-                      f"got {100*len(all_features)/total_count:.1f}%")
+            # v2: Warn if acceptance rate is too low (dropped to 30% for front zero-stick classes)
+            min_acceptance = 0.30 if (viewpoint == 'front' and class_name in FRONT_ZERO_STICK_CLASSES) else 0.50
+            if acceptance_rate < min_acceptance:
+                print(f"  WARNING: Low acceptance rate! Expected >{min_acceptance*100:.0f}%, "
+                      f"got {100*acceptance_rate:.1f}%")
             
             if len(all_features) == 0:
-                print(f"  Warning: No valid features extracted")
+                print(f"  CRITICAL: No valid features extracted — template will be MISSING")
+                # v2: Still write an empty marker so downstream can detect it
+                key = f"{viewpoint}_{class_name}"
+                templates[key] = {
+                    "_count": 0,
+                    "_acceptance_rate": 0.0,
+                    "_rejection_reasons": dict(rejection_reasons),
+                    "_empty": True
+                }
                 continue
             
             # Option C: For neutral class, strip stick-dependent features from templates
-            # Neutral = "no active technique"; stick position does not define the class
             if class_name == 'neutral':
                 STICK_FEATURES = [
                     'stick_tip_height', 'stick_grip_height',
@@ -515,6 +598,11 @@ def analyze_reference_images(viewpoint_filter=None, apply_mirror=False):
                     'min': float(np.min(values)),
                     'max': float(np.max(values))
                 }
+            
+            # v2: Inject metadata so downstream can detect weak templates
+            feature_stats['_count'] = len(all_features)
+            feature_stats['_acceptance_rate'] = float(acceptance_rate)
+            feature_stats['_rejection_reasons'] = dict(rejection_reasons)
             
             key = f"{viewpoint}_{class_name}"
             templates[key] = feature_stats
