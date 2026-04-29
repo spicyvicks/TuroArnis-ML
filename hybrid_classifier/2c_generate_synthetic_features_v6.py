@@ -75,10 +75,11 @@ def compute_angle_3d(a, b, c):
 def recompute_node_features(node_features):
     """
     Recompute dist_to_hip and angle_from_hip for all nodes.
-    node_features: [35, 6] with [x, y, z, visibility, dist_to_hip, angle_from_hip]
+    node_features: [35, 7] with [x, y, z, visibility, dist_to_hip, angle_from_hip, has_stick]
     """
     pts = node_features[:, :3].copy()
     vis = node_features[:, 3].copy()
+    has_stick = node_features[:, 6].copy() if node_features.shape[1] > 6 else np.ones(35)
 
     # Hip center (nodes 23 and 24)
     hip_center = (pts[23] + pts[24]) / 2.0
@@ -95,6 +96,9 @@ def recompute_node_features(node_features):
         angle = np.degrees(np.arctan2(dy, dx))
         out[i, 4] = dist
         out[i, 5] = angle
+
+    if node_features.shape[1] > 6:
+        out[:, 6] = has_stick
 
     return out
 

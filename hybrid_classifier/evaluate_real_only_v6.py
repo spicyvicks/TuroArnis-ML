@@ -11,13 +11,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
 from torch_geometric.data import Data, Batch
-from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.nn import GCNConv, global_mean_pool, global_add_pool
 from torch_geometric.loader import DataLoader as GeoDataLoader
 
 # --- CONFIG (must match training) ---
 NUM_CLASSES = 13
 NUM_NODES = 35  # 34 pose + 1 stick
-NODE_FEATURES = 6
+NODE_FEATURES = 7
 HIDDEN_DIM = 128
 NUM_LAYERS = 3
 DROPOUT = 0.5
@@ -75,6 +75,7 @@ class HybridGCN(nn.Module):
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         hybrid_features = data.hybrid_features
+        node_mask = getattr(data, 'node_mask', None)
         batch_size = batch.max().item() + 1
         node_indices = torch.arange(NUM_NODES, device=x.device).unsqueeze(0).expand(batch_size, -1)
         node_emb = self.node_embedding(node_indices).view(-1, NODE_EMBED_DIM)
@@ -88,7 +89,14 @@ class HybridGCN(nn.Module):
                 x = x_new + x
             else:
                 x = x_new
-        x_pool = global_mean_pool(x, batch)
+        if node_mask is not None:
+            # Masked global mean pool: zero out missing nodes, divide by valid count per graph
+            x = x * node_mask.unsqueeze(-1)
+            x_sum = global_add_pool(x, batch)
+            mask_sum = global_add_pool(node_mask.unsqueeze(-1), batch)
+            x_pool = x_sum / (mask_sum + 1e-8)
+        else:
+            x_pool = global_mean_pool(x, batch)
         batch_size = batch.max().item() + 1
         hybrid_features = hybrid_features.view(batch_size, -1)
         hybrid_out = self.hybrid_mlp(hybrid_features)
@@ -124,11 +132,17 @@ def load_real_test_data(real_path, viewpoint='front'):
         hybrid_features = hybrid_features[valid]
         labels = labels[valid]
         has_stick_nodes = has_stick_nodes[valid]
+    # Build node_mask: 1.0 for body nodes (0-32), 1.0 for stick nodes (33-34) only if YOLO detected
+    num_nodes = node_features.size(1)
+    node_mask = torch.ones(len(labels), num_nodes, dtype=torch.float32)
+    for i in range(len(labels)):
+        if not has_stick_nodes[i]:
+            node_mask[i, 33:] = 0.0  # zero out stick nodes 33 and 34
     print(f"Final real test samples: {len(labels)}")
-    return node_features, hybrid_features, labels, has_stick_nodes
+    return node_features, hybrid_features, labels, has_stick_nodes, node_mask
 
 
-def create_graph_data(node_features, hybrid_features, labels, has_stick_nodes):
+def create_graph_data(node_features, hybrid_features, labels, has_stick_nodes, node_mask):
     edge_index = torch.tensor(SKELETON_EDGES, dtype=torch.long).t().contiguous()
     graphs = []
     for i in range(len(labels)):
@@ -141,7 +155,8 @@ def create_graph_data(node_features, hybrid_features, labels, has_stick_nodes):
             edge_index=ei,
             hybrid_features=hybrid_features[i],
             y=labels[i],
-            has_stick_nodes=has_stick_nodes[i]
+            has_stick_nodes=has_stick_nodes[i],
+            node_mask=node_mask[i]
         ))
     return graphs
 
@@ -204,7 +219,7 @@ def main():
         sys.exit(1)
 
     # Load real-only test data first to get feature dims
-    node_features, hybrid_features, labels, has_stick_nodes = load_real_test_data(real_test_path, viewpoint)
+    node_features, hybrid_features, labels, has_stick_nodes, node_mask = load_real_test_data(real_test_path, viewpoint)
     num_node_features = node_features.size(2)
     num_hybrid_features = hybrid_features.size(1)
     print(f"Node features: {num_node_features}, Hybrid features: {num_hybrid_features}")
@@ -225,7 +240,7 @@ def main():
         model.load_state_dict(checkpoint)
         print(f"[OK] Loaded model: {model_path}")
 
-    graphs = create_graph_data(node_features, hybrid_features, labels, has_stick_nodes)
+    graphs = create_graph_data(node_features, hybrid_features, labels, has_stick_nodes, node_mask)
 
     # Evaluate
     acc, preds, labels_list = evaluate_model(model, graphs)

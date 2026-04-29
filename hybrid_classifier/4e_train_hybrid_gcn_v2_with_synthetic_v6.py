@@ -35,7 +35,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, WeightedRandomSampler, Dataset
 from torch_geometric.data import Data, Batch
-from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.nn import GCNConv, global_mean_pool, global_add_pool
 from torch_geometric.loader import DataLoader as GeoDataLoader
 
 from tqdm import tqdm
@@ -121,6 +121,7 @@ class HybridGCN(nn.Module):
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         hybrid_features = data.hybrid_features
+        node_mask = data.node_mask  # [batch_size * num_nodes] — 0 for missing stick nodes
         batch_size = batch.max().item() + 1
         node_indices = torch.arange(35, device=x.device).unsqueeze(0).expand(batch_size, -1)
         node_emb = self.node_embedding(node_indices).view(-1, NODE_EMBED_DIM)
@@ -134,7 +135,12 @@ class HybridGCN(nn.Module):
                 x = x_new + x
             else:
                 x = x_new
-        x_pool = global_mean_pool(x, batch)
+        # Masked global mean pool: zero out missing nodes, divide by count of valid nodes per graph
+        x = x * node_mask.unsqueeze(-1)  # zero out stick nodes with mask=0
+        x_sum = global_add_pool(x, batch)  # [batch_size, hidden_dim]
+        # Count valid nodes per graph
+        mask_sum = global_add_pool(node_mask.unsqueeze(-1), batch)  # [batch_size, 1]
+        x_pool = x_sum / (mask_sum + 1e-8)  # avoid div-by-zero
         batch_size = batch.max().item() + 1
         hybrid_features = hybrid_features.view(batch_size, -1)
         hybrid_out = self.hybrid_mlp(hybrid_features)
@@ -177,6 +183,13 @@ class GraphDataset(Dataset):
         else:
             self.has_stick_nodes = torch.ones(len(self.labels), dtype=torch.bool)
 
+        # Build node-level mask: 1.0 for body nodes (0-32), 1.0 for stick nodes (33-34) only if YOLO detected
+        num_nodes = self.node_features.size(1)
+        self.node_mask = torch.ones(len(self.labels), num_nodes, dtype=torch.float32)
+        for i in range(len(self.labels)):
+            if not self.has_stick_nodes[i]:
+                self.node_mask[i, 33:] = 0.0  # zero out stick nodes 33 and 34
+
         if filter_nan:
             nan_mask = self._get_nan_mask()
             if nan_mask.sum() > 0:
@@ -187,6 +200,7 @@ class GraphDataset(Dataset):
                 self.labels = self.labels[valid_mask]
                 self.viewpoints = [v for v, m in zip(self.viewpoints, valid_mask.tolist()) if m]
                 self.has_stick_nodes = self.has_stick_nodes[valid_mask]
+                self.node_mask = self.node_mask[valid_mask]
 
         no_stick_count = (~self.has_stick_nodes).sum().item()
         if no_stick_count > 0:
@@ -218,7 +232,8 @@ class GraphDataset(Dataset):
             edge_index=edge_index,
             hybrid_features=self.hybrid_features[idx],
             y=self.labels[idx],
-            has_stick_nodes=self.has_stick_nodes[idx]
+            has_stick_nodes=self.has_stick_nodes[idx],
+            node_mask=self.node_mask[idx]  # [num_nodes] — 0 for missing stick nodes
         )
         return data
 
@@ -353,6 +368,13 @@ def load_combined_dataset(real_path, synthetic_path, viewpoint=None):
                 self.has_stick_nodes = self.has_stick_nodes[mask]
                 self.is_synthetic = self.is_synthetic[mask]
 
+            # Build node-level mask: 1.0 for body nodes (0-32), 0.0 for stick nodes (33-34) when missing
+            num_nodes = self.node_features.size(1)
+            self.node_mask = torch.ones(len(self.labels), num_nodes, dtype=torch.float32)
+            for i in range(len(self.labels)):
+                if not self.has_stick_nodes[i]:
+                    self.node_mask[i, 33:] = 0.0  # zero out stick nodes 33 and 34
+
             # NaN filter
             node_nan = torch.isnan(self.node_features).any(dim=(1, 2))
             hybrid_nan = torch.isnan(self.hybrid_features).any(dim=1)
@@ -366,6 +388,7 @@ def load_combined_dataset(real_path, synthetic_path, viewpoint=None):
                 self.viewpoints = [v for v, m in zip(self.viewpoints, valid.tolist()) if m]
                 self.has_stick_nodes = self.has_stick_nodes[valid]
                 self.is_synthetic = self.is_synthetic[valid]
+                self.node_mask = self.node_mask[valid]
 
             print(f"Combined dataset: {len(self)} total samples")
             real_count = (~self.is_synthetic).sum().item()
@@ -396,7 +419,8 @@ def load_combined_dataset(real_path, synthetic_path, viewpoint=None):
                 edge_index=edge_index,
                 hybrid_features=self.hybrid_features[idx],
                 y=self.labels[idx],
-                has_stick_nodes=self.has_stick_nodes[idx]
+                has_stick_nodes=self.has_stick_nodes[idx],
+                node_mask=self.node_mask[idx]
             )
             return data
 
@@ -663,7 +687,9 @@ def main():
         print(f"Test synthetic: {syn_test_path}")
 
         train_dataset = load_combined_dataset(real_train_path, syn_train_path, viewpoint=viewpoint)
-        val_dataset = load_combined_dataset(real_test_path, syn_test_path, viewpoint=viewpoint)
+        # Real-only validation: use ONLY real test data, not mixed with synthetic
+        # This prevents early stopping from optimizing for synthetic-smoothed metrics
+        val_dataset = GraphDataset(real_test_path, viewpoint=viewpoint, filter_nan=True)
 
         best_acc, history = train_model(
             train_dataset, val_dataset,

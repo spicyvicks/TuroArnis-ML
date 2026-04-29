@@ -1,11 +1,29 @@
 {
-  "version": "v053_20260205_231539_xgboost",
-  "path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v053_20260205_231539_xgboost",
-  "model_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v053_20260205_231539_xgboost\\model_xgb.joblib",
-  "model_type": "xgboost",
-  "encoder_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v053_20260205_231539_xgboost\\label_encoder.joblib",
-  "scaler_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v053_20260205_231539_xgboost\\scaler.joblib",
-  "selected_features_path": "c:\\Users\\HP\\Documents\\GitHub\\TuroArnis-ML\\models\\v053_20260205_231539_xgboost\\selected_features.json",
-  "test_accuracy": 0.4784688995215311,
-  "set_at": "2026-02-05T23:15:39.527834"
+  "version": "v5_front_deploy",
+  "path": "deployment_package",
+  "model_path": "deployment_package/models/model_front_v5_deploy.pth",
+  "model_type": "hybrid_gcn_v5",
+  "feature_extraction": "deployment_package/src/feature_extraction_v5.py",
+  "model_architecture": "deployment_package/src/model_v5.py",
+  "inference_wrapper": "deployment_package/src/inference_v5.py",
+  "class_names": [
+    "crown_thrust_correct",
+    "left_chest_thrust_correct",
+    "left_elbow_block_correct",
+    "left_eye_thrust_correct",
+    "left_knee_block_correct",
+    "left_temple_block_correct",
+    "right_chest_thrust_correct",
+    "right_elbow_block_correct",
+    "right_eye_thrust_correct",
+    "right_knee_block_correct",
+    "right_temple_block_correct",
+    "solar_plexus_thrust_correct",
+    "neutral"
+  ],
+  "num_classes": 13,
+  "viewpoint": "front",
+  "real_only_test_acc": 0.777,
+  "source_model": "model_front_with_synthetic_3x_v5.pth",
+  "set_at": "2026-04-28T15:30:00.000Z"
 }

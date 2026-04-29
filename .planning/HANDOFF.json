@@ -8,10 +8,12 @@
   "task": null,
   "total_tasks": null,
   "status": "paused",
-  "completed_tasks": [
+    "completed_tasks": [
     {"id": 1, "name": "Full system audit of front-view classifier failures", "status": "done", "commit": "N/A"},
     {"id": 2, "name": "Identified root cause: estimate_stick_from_pose() injects label-leaked, physically wrong geometry that poisons global_mean_pool", "status": "done", "commit": "N/A"},
-    {"id": 3, "name": "Implemented Option A edits (partial)", "status": "in_progress", "progress": "3 of 6 edits completed in source files; syntax check and evaluation script update pending"}
+    {"id": 3, "name": "Implemented Option A edits (partial)", "status": "done", "commit": "N/A"},
+    {"id": 4, "name": "Syntax-check all edited files", "status": "done", "commit": "N/A"},
+    {"id": 5, "name": "Update evaluate_real_only_v6.py to handle node_mask in Data object", "status": "done", "commit": "N/A"}
   ],
   "remaining_tasks": [
     {"id": 4, "name": "Syntax-check all edited files", "status": "not_started"},

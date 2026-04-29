@@ -1,6 +1,6 @@
 """
 Step 2b: Generate Node-Specific + Hybrid Features (Option 2)
-- Node features: Per-node geometric data (x, y, visibility, angles, distances)
+- Node features: Per-node geometric data (x, y, z, visibility, dist_to_hip, angle_from_hip, has_stick)
 - Global features: Hybrid similarity scores (existing approach)
 - Uses multiprocessing for faster extraction
 """
@@ -212,9 +212,11 @@ def extract_raw_features(image_path, stick_detector, viewpoint=None, class_idx=N
     kpts = np.array(kpts)
     
     # Extract stick with Method 4 correction
+    stick_yolo_detected = False  # Track whether stick was truly detected by YOLO
     stick_results = stick_detector(str(image_path), verbose=False)[0]
     if stick_results.keypoints is not None and len(stick_results.keypoints.data) > 0:
         stick_kpts = stick_results.keypoints.data[0].cpu().numpy()
+        stick_yolo_detected = True
         
         # Get raw YOLO endpoints in pixels
         raw_grip_px = (stick_kpts[0, 0], stick_kpts[0, 1])
@@ -250,26 +252,27 @@ def extract_raw_features(image_path, stick_detector, viewpoint=None, class_idx=N
             stick_right_hand = bool(dist_to_r < dist_to_l)
     else:
         # No stick detected by YOLO
-        # For front view classes 0-3, try finger fallback
+        # For front view classes 0-3 and neutral, use TRUE zero-stick fallback
+        # (Estimator v6 was proven to inject wrong geometry that poisons global_mean_pool)
         FRONT_ZERO_STICK_CLASSES = [0, 1, 2, 3, 12]  # crown, left_chest, left_elbow, left_eye, neutral
         
         if (viewpoint == 'front' and 
             class_idx is not None and 
             class_idx in FRONT_ZERO_STICK_CLASSES):
             
-            # For front view classes 0-3, use ZERO stick coordinates instead of estimation
-            # This keeps all 35 nodes but sets stick to (0,0,0,0) so model can ignore them
-            stick_grip = [0.0, 0.0, 0.0, 0.0]  # x, y, z, confidence = 0
+            # TRUE zero-stick fallback — all 4 dims = 0 so node features can be fully zeroed
+            stick_grip = [0.0, 0.0, 0.0, 0.0]
             stick_tip = [0.0, 0.0, 0.0, 0.0]
-            stick_right_hand = True  # Default: stick is held in right hand
+            stick_right_hand = True
+            has_stick_estimated = False  # marks that stick nodes should be fully masked out
             
             # Track zero-stick count
             if class_idx in _fallback_counts:
                 _fallback_counts[class_idx] += 1
             
-            # Log periodically (every 10 samples)
+            # Log periodically
             if _fallback_counts[class_idx] % 10 == 1:
-                print(f"[FRONT_0-3_ZERO_STICK] {image_path.name}: class={CLASS_NAMES[class_idx]}, count={_fallback_counts[class_idx]}")
+                print(f"[FRONT_ZERO_STICK] {image_path.name}: class={CLASS_NAMES[class_idx]}, count={_fallback_counts[class_idx]}")
         else:
             # Not front 0-3 or class_idx not provided, skip as before
             return None
@@ -439,12 +442,18 @@ def extract_raw_features(image_path, stick_detector, viewpoint=None, class_idx=N
     # 15. Right wrist horizontal position — person-normalized
     # Right-target thrusts: far right (positive), Left-target: near center (~0)
     features['right_wrist_x_signed'] = features['right_wrist_x'] / shoulder_width
+
+    # === STICK PRESENCE SIGNAL ===
+    # Binary flag: 1.0 if YOLO detected stick, 0.0 if zero-stick fallback.
+    # Passed through to hybrid MLP so model knows when to trust stick features vs body-pose only.
+    features['has_stick'] = 1.0 if stick_yolo_detected else 0.0
     
     return {
         'pose_keypoints': kpts,
         'stick_keypoints': stick_keypoints,
         'global_features': features,
-        'stick_right_hand': stick_right_hand
+        'stick_right_hand': stick_right_hand,
+        'has_stick_nodes': stick_yolo_detected  # False for estimated sticks (GCN should ignore them)
     }
 
 
@@ -474,6 +483,7 @@ DIRECTION_FEATURES = {
     'left_wrist_height_signed': 0.5,   # active hand for left-target techniques
     'left_wrist_x_signed': 0.5,        # thrust (far left) vs block (near center)
     'right_wrist_x_signed': 0.5,       # right-target (far right) vs left-target (~0)
+    'has_stick': 1.0,                  # binary: 1.0 = YOLO detected, 0.0 = zero-stick fallback
 }
 
 
@@ -511,18 +521,19 @@ def compute_hybrid_features(raw_features, templates, viewpoint, class_name):
     return np.array(hybrid_features, dtype=np.float32)
 
 
-def extract_node_features(pose_keypoints, stick_keypoints, include_stick=True):
+def extract_node_features(pose_keypoints, stick_keypoints, include_stick=True, has_stick_detected=True):
     """
     Extract per-node features with 3D coordinates.
-    Each node gets: [x, y, z, visibility, distance_to_hip_3d, angle_from_hip]
+    Each node gets: [x, y, z, visibility, distance_to_hip_3d, angle_from_hip, has_stick]
     
     Args:
         pose_keypoints: [33, 4] array of pose landmarks
         stick_keypoints: [2, 4] array of stick grip and tip (or None)
         include_stick: Whether to include stick nodes (35 total) or just pose (33 total)
+        has_stick_detected: Whether YOLO actually detected the stick (False = zero-stick fallback)
     
     Returns:
-        node_features: [N, 6] array where N is 33 or 35 depending on include_stick
+        node_features: [N, 7] array where N is 33 or 35 depending on include_stick
     """
     # Compute hip center for reference (3D)
     hip_center = (pose_keypoints[23, :3] + pose_keypoints[24, :3]) / 2  # [x, y, z]
@@ -535,17 +546,29 @@ def extract_node_features(pose_keypoints, stick_keypoints, include_stick=True):
         all_keypoints = pose_keypoints
     
     node_features = []
+    num_keypoints = len(all_keypoints)
     for i, kpt in enumerate(all_keypoints):
         x, y, z, vis = kpt
         
-        # 3D Distance to hip center
-        dist_to_hip = np.sqrt((x - hip_center[0])**2 + (y - hip_center[1])**2 + (z - hip_center[2])**2)
-        
-        # Angle from hip center (2D projection for compatibility)
-        angle_from_hip = np.degrees(np.arctan2(y - hip_center[1], x - hip_center[0]))
-        
-        # Node feature: [x, y, z, vis, dist_to_hip_3d, angle_from_hip]
-        node_features.append([x, y, z, vis, dist_to_hip, angle_from_hip])
+        # has_stick: 1.0 for body nodes (0-32), 1.0 for stick nodes (33-34) if YOLO detected, else 0.0
+        is_stick_node = i >= 33
+        if vis < 1e-6:
+            # True zero for invisible/missing nodes — prevents global_mean_pool poisoning
+            node_features.append([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        else:
+            # 3D Distance to hip center
+            dist_to_hip = np.sqrt((x - hip_center[0])**2 + (y - hip_center[1])**2 + (z - hip_center[2])**2)
+            
+            # Angle from hip center (2D projection for compatibility)
+            angle_from_hip = np.degrees(np.arctan2(y - hip_center[1], x - hip_center[0]))
+            
+            if is_stick_node and not has_stick_detected:
+                has_stick = 0.0  # zero-stick fallback nodes
+            else:
+                has_stick = 1.0  # body nodes and YOLO-detected stick nodes
+            
+            # Node feature: [x, y, z, vis, dist_to_hip_3d, angle_from_hip, has_stick]
+            node_features.append([x, y, z, vis, dist_to_hip, angle_from_hip, has_stick])
     
     return np.array(node_features, dtype=np.float32)
 
@@ -819,11 +842,12 @@ def process_single_image(args):
                 include_stick=True
             )
         else:
-            # Standard 6-dim format for HybridGCN/4e
+            # Standard 7-dim format for HybridGCN/4e with has_stick node feature
             node_features = extract_node_features(
                 raw_data['pose_keypoints'],
                 raw_data['stick_keypoints'],
-                include_stick=True
+                include_stick=True,
+                has_stick_detected=raw_data['has_stick_nodes']
             )
         
         # Compute global hybrid features (kept for backward compatibility)
@@ -840,7 +864,7 @@ def process_single_image(args):
             'hybrid_features': hybrid_features,
             'label': class_idx,
             'viewpoint': viewpoint,
-            'has_stick_nodes': True,  # All samples have stick nodes
+            'has_stick_nodes': raw_data.get('has_stick_nodes', True),  # False for estimated sticks
             'stick_right_hand': raw_data.get('stick_right_hand', True)
         }
     except Exception as e:

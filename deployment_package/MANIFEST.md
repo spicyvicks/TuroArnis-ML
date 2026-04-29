@@ -1,92 +1,103 @@
 # Deployment Package Manifest
-# Generated: 2026-02-10
+# Updated: 2026-04-28
 
 ## Package Information
-- **Version**: 1.0
+- **Version**: v5_front
 - **Target Platform**: Windows Desktop (CPU-only)
 - **Python Version**: 3.11
 - **PyTorch Version**: 2.10.0+cpu
 
+## Active Model
+
+**`model_front_v5_deploy.pth`** — Front-view specialist, 77.7% real-only accuracy
+- 13 classes (including `neutral`)
+- 6-dim node features + 46 hybrid features
+- 69,541 parameters
+- CPU inference optimized
+
 ## Files Included
 
-### Models (Total: ~4.05 MB)
-- models/hybrid_gcn_v2_front.pth (1.35 MB)
-- models/hybrid_gcn_v2_left.pth (1.35 MB)
-- models/hybrid_gcn_v2_right.pth (1.35 MB)
+### Models
+- `models/model_front_v5_deploy.pth` (861 KB) — Active deployment model
+- Legacy: `models/hybrid_gcn_v2_front.pth` (1.35 MB) — Superseded by v5
 
-### Weights (Total: ~6.12 MB)
-- weights/best.pt (6.12 MB) - YOLOv8-Pose stick detector
+### Weights
+- `weights/best.pt` (6.12 MB) — YOLOv8-Pose stick detector
 
 ### Source Code
-- src/model_architecture.py - HybridGCN model definition
-- src/feature_extraction.py - Feature extraction utilities
-- src/feature_templates.json (202 KB) - Reference pose templates
+- `src/model_v5.py` — V5 HybridGCN architecture (exact training match)
+- `src/feature_extraction_v5.py` — V5 feature extraction with signed features
+- `src/inference_v5.py` — High-level inference wrapper for app integration
+- `src/model_v6.py` — V6 HybridGCN with masked pooling + node_mask
+- `src/feature_extraction_v6.py` — V6 feature extraction with 7-dim nodes + node_mask
+- `src/inference_v6.py` — V6 high-level inference wrapper
+- `src/model_architecture.py` — Legacy architecture (superseded)
+- `src/feature_extraction.py` — Legacy extraction (superseded)
+- `src/feature_templates.json` (202 KB) — Reference pose templates
 
 ### Documentation
-- docs/implementation_plan.md - Comprehensive implementation guide
-- README.md - Quick start and usage guide
+- `README_v5.md` — V5 deployment guide (**RECOMMENDED for production**)
+- `README_v6.md` — V6 deployment guide (masked pooling architecture)
+- `docs/implementation_plan.md` — Legacy comprehensive guide
+- `README.md` — Legacy quick start
 
 ### Configuration
-- requirements.txt - Python dependencies (locked versions)
+- `requirements.txt` — Python dependencies (locked versions)
 
 ## Total Package Size
-Approximately **10.5 MB** (excluding Python environment)
+Approximately **8.5 MB** (excluding Python environment)
 
 ## Deployment Checklist
 
 ### Pre-Implementation
-- [ ] Review `docs/implementation_plan.md`
-- [ ] Answer 4 critical questions in implementation plan
+- [x] Model trained and validated (77.7% real-only)
+- [x] Deployment checkpoint created with config
+- [x] Feature extraction verified against training
+- [ ] **App update: Add `neutral` class to class list (13 classes)**
+- [ ] **App update: Implement signed direction features in feature extraction**
 - [ ] Set up Python 3.11 environment
 - [ ] Install dependencies from `requirements.txt`
 
 ### Implementation Phase
-- [ ] Create inference engine (`inference_engine.py`)
-- [ ] Create model loader (`model_loader.py`)
-- [ ] Create desktop app (`app_main.py` with PyQt6)
-- [ ] Create camera handler (`camera_handler.py`)
-- [ ] Create database layer (`database.py` with SQLite)
-- [ ] Implement performance optimizations (quantization)
+- [ ] Integrate `inference_v5.py` into TuroArnis app
+- [ ] Test end-to-end with real camera feed
+- [ ] Viewpoint switching (currently front-only)
 
-### Testing Phase
-- [ ] Unit tests for feature extraction
-- [ ] Integration tests for end-to-end pipeline
-- [ ] Performance benchmarking (target: 30 FPS)
-- [ ] Real-time classification testing
-- [ ] Viewpoint switching testing
-- [ ] Database logging verification
-
-### Packaging Phase
-- [ ] Create PyInstaller spec file
-- [ ] Build standalone executable
-- [ ] Test on clean Windows machine
-- [ ] Verify .exe size < 600MB
-- [ ] Verify startup time < 10 seconds
+### Next Models
+- [ ] Train left viewpoint specialist (v5 or v2)
+- [ ] Train right viewpoint specialist (v5 or v2)
 
 ## Known Limitations
 
-1. **Performance**: Current pipeline runs at ~10 FPS on Intel Core 7 150U
-   - **Solution**: Implement YOLO quantization or frame skipping (see implementation plan)
-
-2. **Stick Detection Dependency**: Models require YOLO stick detector
-   - **Fallback**: Can use default stick positions if detection fails
-
+1. **Front-view only** — left/right models pending
+2. **Performance**: ~10-20 FPS on Intel Core 7 150U
+   - **Solution**: Frame skipping or YOLO quantization
 3. **CPU-Only**: No GPU acceleration
-   - **Note**: Models are optimized for CPU inference
-
-4. **Viewpoint Selection**: Requires manual selection or auto-detection implementation
-   - **Decision needed**: See implementation plan questions
-
-## Support Files Required (Not Included)
-
-These files are needed for full implementation but not included in this package:
-
-1. **Webcam drivers**: System-dependent
-2. **SQLite database**: Created at runtime
-3. **Application icon**: For .exe packaging
-4. **User manual**: For end users
+4. **Left-side classes weaker**: crown 73%, left_chest 33%, left_elbow 20%
 
 ## Version History
+
+### v6_front (2026-04-28)
+- **V6 front specialist model deployed**
+- 74.6% real-only test accuracy (masked pooling architecture)
+- 13 classes with `neutral` support
+- 7-dim node features (has_stick binary on nodes)
+- 49 hybrid features (signed + has_stick)
+- True zero-stick fallback with node_mask masking
+- Cleaner architecture, 3.1% below v5 but more robust
+
+### v5_front (2026-04-28)
+- **V5 front specialist model deployed**
+- 77.7% real-only test accuracy (exceeds 70% target)
+- 13 classes with `neutral` support
+- Signed direction features (13 hybrid features)
+- V5 stick fallback (origin-based, proven 77.7%)
+- **RECOMMENDED for production** — higher accuracy
+
+### v1.1 (2026-02-11)
+- Updated Class List (Removed 'neutral_stance', 13 -> 12 classes)
+- Syncing latest Hybrid GCN V2 models
+- Updated feature extraction logic
 
 ### v1.0 (2026-02-10)
 - Initial deployment package
@@ -94,15 +105,3 @@ These files are needed for full implementation but not included in this package:
 - YOLO stick detector
 - Feature extraction utilities
 - Comprehensive documentation
-
-## Next Release Plans
-
-- [ ] Quantized models (INT8) for faster inference
-- [ ] ONNX export for cross-platform compatibility
-- [ ] Auto-viewpoint detection model
-- [ ] Mobile deployment (TensorFlow Lite)
-
-### v1.1 (2026-02-11)
-- Updated Class List (Removed 'neutral_stance', 13 -> 12 classes)
-- Syncing latest Hybrid GCN V2 models
-- Updated feature extraction logic
