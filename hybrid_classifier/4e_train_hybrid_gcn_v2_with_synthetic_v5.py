@@ -433,9 +433,10 @@ def train_model(train_dataset, val_dataset, viewpoint=None, config=None, synthet
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 
     view_suffix = viewpoint
-    model_name = f"model_{view_suffix}_with_synthetic_{synthetic_factor}x_v5"
+    suffix = config.get('model_suffix', '')
+    model_name = f"model_{view_suffix}_with_synthetic_{synthetic_factor}x_v5{suffix}"
     best_model_path = MODELS_DIR / f"{model_name}.pth"
-    history_path = HISTORY_DIR / f"history_{view_suffix}_with_synthetic_{synthetic_factor}x_v5.json"
+    history_path = HISTORY_DIR / f"history_{view_suffix}_with_synthetic_{synthetic_factor}x_v5{suffix}.json"
 
     print(f"\n{'='*60}")
     print(f"Training HybridGCN V2 WITH SYNTHETIC - {view_suffix.upper()}")
@@ -597,6 +598,8 @@ def main():
     parser.add_argument('--learning-rate', type=float, default=default_config['learning_rate'])
     parser.add_argument('--no_synthetic', action='store_true',
                         help='Train WITHOUT synthetic data (baseline comparison)')
+    parser.add_argument('--model-suffix', type=str, default='',
+                        help='Suffix appended to output model name (e.g., _new)')
 
     args = parser.parse_args()
 
@@ -616,7 +619,8 @@ def main():
         'learning_rate': args.learning_rate,
         'weight_decay': default_config['weight_decay'],
         'batch_size': default_config['batch_size'],
-        'max_overfit_gap': default_config['max_overfit_gap']
+        'max_overfit_gap': default_config['max_overfit_gap'],
+        'model_suffix': args.model_suffix
     }
 
     viewpoint = args.viewpoint

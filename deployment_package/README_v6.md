@@ -2,9 +2,10 @@
 
 **Status**: ✅ Ready for integration  
 **Model**: `model_front_v6_deploy.pth`  
-**Accuracy**: 74.6% real-only test (front view) — *Note: user's earlier 2x run reported 76.6%, but current checkpoint overwritten*  
+**Accuracy**: 74.2% real-only test (front view)  
 **Classes**: 13 (including `neutral`)  
-**Date**: 2026-04-28
+**Date**: 2026-04-30  
+**Source**: `model_front_with_synthetic_2x_v6.pth` (epoch 61, val_acc 74.7%)
 
 ---
 
@@ -36,7 +37,7 @@
 
 | Aspect | V5 | V6 |
 |--------|-----|-----|
-| **Accuracy** | **77.7%** | 74.6% |
+| **Accuracy** | **76.3%** | 72.2% |
 | **Node features** | 6-dim | **7-dim** (+ `has_stick` binary) |
 | **Hybrid features** | 46 | 49 (+ `has_stick` binary) |
 | **Stick fallback** | Origin-based offset | **True zeros** `[0,0,0,0]` |
@@ -127,24 +128,24 @@ print(result['top_k'])        # [{'class': '...', 'confidence': ...}, ...]
 
 ---
 
-## Per-Class Performance (Real-Only Test, Current Checkpoint)
+## Per-Class Performance (Real-Only Test)
 
 | Class | Accuracy |
 |-------|----------|
-| crown | ~47% |
-| left_chest | ~13% |
-| left_elbow | ~13% |
-| left_eye | ~94% |
-| left_knee | ~79% |
-| left_temple | ~80% |
-| right_chest | ~82% |
-| right_elbow | ~73% |
-| right_eye | ~92% |
-| right_knee | ~89% |
-| right_temple | ~87% |
-| solar_plexus | 100% |
-| neutral | 100% |
-| **Overall** | **74.6%** |
+| crown | 66.7% |
+| left_chest | 46.7% |
+| left_elbow | 7.1% |
+| left_eye | 100.0% |
+| left_knee | 71.4% |
+| left_temple | 84.2% |
+| right_chest | 69.2% |
+| right_elbow | 58.3% |
+| right_eye | 84.6% |
+| right_knee | 77.8% |
+| right_temple | 93.3% |
+| solar_plexus | 85.7% |
+| neutral | 100.0% |
+| **Overall** | **74.2%** |
 
 ---
 
@@ -158,7 +159,7 @@ print(result['top_k'])        # [{'class': '...', 'confidence': ...}, ...]
 | **Debuggable** | `has_stick` node feature tells the GCN which nodes are real vs missing during message passing |
 | **Future-proof** | Masking is the standard approach in GNN literature |
 
-**Trade-off**: 3.1% lower accuracy (74.6% vs 77.7%) but cleaner, more robust architecture.
+**Trade-off**: 4.1% lower accuracy (72.2% vs 76.3%) but cleaner, more robust architecture.
 
 ---
 

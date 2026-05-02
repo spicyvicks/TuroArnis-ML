@@ -252,30 +252,20 @@ def extract_raw_features(image_path, stick_detector, viewpoint=None, class_idx=N
             stick_right_hand = bool(dist_to_r < dist_to_l)
     else:
         # No stick detected by YOLO
-        # For front view classes 0-3 and neutral, use TRUE zero-stick fallback
+        # ALL classes now use TRUE zero-stick fallback instead of rejecting the image
         # (Estimator v6 was proven to inject wrong geometry that poisons global_mean_pool)
-        FRONT_ZERO_STICK_CLASSES = [0, 1, 2, 3, 12]  # crown, left_chest, left_elbow, left_eye, neutral
+        stick_grip = [0.0, 0.0, 0.0, 0.0]
+        stick_tip = [0.0, 0.0, 0.0, 0.0]
+        stick_right_hand = True
+        has_stick_estimated = False  # marks that stick nodes should be fully masked out
         
-        if (viewpoint == 'front' and 
-            class_idx is not None and 
-            class_idx in FRONT_ZERO_STICK_CLASSES):
-            
-            # TRUE zero-stick fallback — all 4 dims = 0 so node features can be fully zeroed
-            stick_grip = [0.0, 0.0, 0.0, 0.0]
-            stick_tip = [0.0, 0.0, 0.0, 0.0]
-            stick_right_hand = True
-            has_stick_estimated = False  # marks that stick nodes should be fully masked out
-            
-            # Track zero-stick count
-            if class_idx in _fallback_counts:
-                _fallback_counts[class_idx] += 1
-            
-            # Log periodically
-            if _fallback_counts[class_idx] % 10 == 1:
-                print(f"[FRONT_ZERO_STICK] {image_path.name}: class={CLASS_NAMES[class_idx]}, count={_fallback_counts[class_idx]}")
-        else:
-            # Not front 0-3 or class_idx not provided, skip as before
-            return None
+        # Track zero-stick count
+        if class_idx is not None and class_idx in _fallback_counts:
+            _fallback_counts[class_idx] += 1
+        
+        # Log periodically
+        if class_idx is not None and _fallback_counts[class_idx] % 10 == 1:
+            print(f"[ZERO_STICK_FALLBACK] {image_path.name}: class={CLASS_NAMES[class_idx]}, count={_fallback_counts[class_idx]}")
     
     stick_keypoints = np.array([stick_grip, stick_tip])
     

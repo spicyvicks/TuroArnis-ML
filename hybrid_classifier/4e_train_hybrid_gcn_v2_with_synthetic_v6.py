@@ -46,16 +46,16 @@ from tqdm import tqdm
 
 HIDDEN_DIM = 128
 NUM_LAYERS = 3
-DROPOUT = 0.5
+DROPOUT = 0.6
 NODE_EMBED_DIM = 8
 
 LEARNING_RATE = 0.005
-WEIGHT_DECAY = 5e-5
+WEIGHT_DECAY = 5e-4
 EPOCHS = 150
 PATIENCE = 20
 BATCH_SIZE = 64
 
-MAX_OVERFIT_GAP = 35.0
+MAX_OVERFIT_GAP = 30.0
 
 DATA_DIR = Path("hybrid_classifier/hybrid_features_v6")
 MODELS_DIR = Path("hybrid_classifier/models")
@@ -457,9 +457,10 @@ def train_model(train_dataset, val_dataset, viewpoint=None, config=None, synthet
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 
     view_suffix = viewpoint
-    model_name = f"model_{view_suffix}_with_synthetic_{synthetic_factor}x_v6"
+    suffix = config.get('model_suffix', '')
+    model_name = f"model_{view_suffix}_with_synthetic_{synthetic_factor}x_v6{suffix}"
     best_model_path = MODELS_DIR / f"{model_name}.pth"
-    history_path = HISTORY_DIR / f"history_{view_suffix}_with_synthetic_{synthetic_factor}x_v6.json"
+    history_path = HISTORY_DIR / f"history_{view_suffix}_with_synthetic_{synthetic_factor}x_v6{suffix}.json"
 
     print(f"\n{'='*60}")
     print(f"Training HybridGCN V2 WITH SYNTHETIC - {view_suffix.upper()}")
@@ -619,6 +620,8 @@ def main():
     parser.add_argument('--dropout', type=float, default=default_config['dropout'])
     parser.add_argument('--hidden-dim', type=int, default=default_config['hidden_dim'])
     parser.add_argument('--learning-rate', type=float, default=default_config['learning_rate'])
+    parser.add_argument('--model-suffix', type=str, default='',
+                        help='Suffix appended to output model name (e.g., _ep150)')
     parser.add_argument('--no_synthetic', action='store_true',
                         help='Train WITHOUT synthetic data (baseline comparison)')
 
@@ -640,7 +643,8 @@ def main():
         'learning_rate': args.learning_rate,
         'weight_decay': default_config['weight_decay'],
         'batch_size': default_config['batch_size'],
-        'max_overfit_gap': default_config['max_overfit_gap']
+        'max_overfit_gap': default_config['max_overfit_gap'],
+        'model_suffix': args.model_suffix
     }
 
     viewpoint = args.viewpoint
