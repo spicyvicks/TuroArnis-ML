@@ -24,3 +24,4 @@ runs/
 reference_poses/
 stick_test.jpg
 front/
+dataset_split_right_cleaned/

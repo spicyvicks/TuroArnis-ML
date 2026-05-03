@@ -316,6 +316,20 @@ scale = 0.85 + (0.3 * random())  # 0.85 to 1.15
 x_augmented = x * scale + noise
 ```
 
+> **CRITICAL WARNING — Horizontal Flip Augmentation for Side Viewpoints:**
+> 
+> The image-level augmentation pipeline (`0c_augment_training_data.py`) applies `HorizontalFlip` to **all** viewpoints, including left and right. This creates a systematic mismatch:
+> - 50% of left/right training images are horizontally flipped
+> - Reference templates are extracted from **unflipped** reference poses
+> - Hybrid similarity features are inconsistent for flipped samples (horizontal feature signs negated)
+> 
+> **Impact:** The hybrid MLP branch learns from contradictory template-matching signals. The GCN graph branch is unaffected and compensates, so models still achieve ~88% left-viewpoint accuracy. However, this is a known training-data artifact that should be fixed in future retraining cycles.
+> 
+> **Fix options for future runs:**
+> 1. **Best:** Remove horizontal flip for left/right viewpoints only (keep for front).
+> 2. **If data volume drops too low:** Replace flipped aug with 2x–3x synthetic data (`2c_generate_synthetic_features_v6.py`). **Do not exceed 3x** — front-view experiments show 5x synthetic causes severe overfitting (val accuracy drops from ~70% to ~58%).
+> 3. **Alternative:** Implement dual-template feature generation — load `feature_templates_mirrored.json` for flipped samples during `.pt` generation.
+
 ---
 
 ## Training Methodology

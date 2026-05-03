@@ -177,6 +177,8 @@ print(f"Predicted: {CLASS_NAMES[predicted_class]} ({confidence:.2%})")
 
 Check the `test_accuracy` field in each `.pth` file for exact metrics.
 
+> **Known Limitation — Left/Right Viewpoints:** The left and right specialist models were trained on a mixture of flipped and unflipped augmented images, creating a systematic mismatch between reference templates and 50% of training data. See `left/README.md` for a full explanation. The front viewpoint model is **not** affected by this issue. Despite the mismatch, left/right models still achieve ~88% real-only accuracy because the GCN graph branch is robust to the inconsistency.
+
 ## 🛠️ Next Steps
 
 1. **Read the Implementation Plan**: See `docs/implementation_plan.md` for:

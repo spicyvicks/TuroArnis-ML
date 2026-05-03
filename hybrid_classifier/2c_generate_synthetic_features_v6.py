@@ -427,11 +427,15 @@ def main():
                         help="Joint perturbation std dev (default: 0.02 = 2%)")
     parser.add_argument("--viewpoint", type=str, default="front",
                         help="Viewpoint to process (default: front)")
+    parser.add_argument("--features-dir", type=str, default=None,
+                        help="Directory containing real feature .pt files (default: hybrid_classifier/hybrid_features_v6)")
     args = parser.parse_args()
 
+    features_dir = Path(args.features_dir) if args.features_dir else FEATURES_DIR
+    out_dir = features_dir
     viewpoint = args.viewpoint
-    train_path = FEATURES_DIR / f"train_features_{viewpoint}.pt"
-    test_path = FEATURES_DIR / f"test_features_{viewpoint}.pt"
+    train_path = features_dir / f"train_features_{viewpoint}.pt"
+    test_path = features_dir / f"test_features_{viewpoint}.pt"
 
     if not train_path.exists():
         print(f"Error: Train file not found: {train_path}")
@@ -440,7 +444,7 @@ def main():
         print(f"Error: Test file not found: {test_path}")
         return
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     # === TRAIN ===
     print(f"\n{'='*60}")
@@ -453,7 +457,7 @@ def main():
 
     syn_train = generate_train_synthetics(train_data, factor=args.train_factor, sigma=args.sigma)
 
-    train_output = OUTPUT_DIR / f"synthetic_train_features_{viewpoint}_{args.train_factor}x.pt"
+    train_output = out_dir / f"synthetic_train_features_{viewpoint}_{args.train_factor}x.pt"
     torch.save(syn_train, train_output)
     print(f"[OK] Saved synthetic train: {train_output}")
     print(f"  Samples: {len(syn_train['labels'])} (from {len(train_data['labels'])} real)")
@@ -471,7 +475,7 @@ def main():
 
     syn_test = generate_test_synthetics(test_data, factor=args.test_factor, sigma=args.sigma)
 
-    test_output = OUTPUT_DIR / f"synthetic_test_features_{viewpoint}_{args.test_factor}x.pt"
+    test_output = out_dir / f"synthetic_test_features_{viewpoint}_{args.test_factor}x.pt"
     torch.save(syn_test, test_output)
     print(f"[OK] Saved synthetic test: {test_output}")
     print(f"  Samples: {len(syn_test['labels'])} (from {len(test_data['labels'])} real)")

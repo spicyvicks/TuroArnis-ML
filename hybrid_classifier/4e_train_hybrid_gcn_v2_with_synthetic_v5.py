@@ -600,8 +600,12 @@ def main():
                         help='Train WITHOUT synthetic data (baseline comparison)')
     parser.add_argument('--model-suffix', type=str, default='',
                         help='Suffix appended to output model name (e.g., _new)')
+    parser.add_argument('--data-dir', type=str, default=None,
+                        help='Override data directory (default: hybrid_classifier/hybrid_features_v5)')
 
     args = parser.parse_args()
+
+    data_dir = Path(args.data_dir) if args.data_dir else DATA_DIR
 
     if args.viewpoint and args.hidden_dim == default_config['hidden_dim']:
         if args.viewpoint in ['left', 'right']:
@@ -629,8 +633,8 @@ def main():
         sys.exit(1)
 
     # Paths
-    real_train_path = DATA_DIR / f"train_features_{viewpoint}.pt"
-    real_test_path = DATA_DIR / f"test_features_{viewpoint}.pt"
+    real_train_path = data_dir / f"train_features_{viewpoint}.pt"
+    real_test_path = data_dir / f"test_features_{viewpoint}.pt"
 
     if not real_train_path.exists():
         print(f"Error: Real train data not found: {real_train_path}")
@@ -650,8 +654,8 @@ def main():
         )
     else:
         # With synthetic
-        syn_train_path = DATA_DIR / f"synthetic_train_features_{viewpoint}_{args.synthetic_factor}x.pt"
-        syn_test_path = DATA_DIR / f"synthetic_test_features_{viewpoint}_{args.test_synthetic_factor}x.pt"
+        syn_train_path = data_dir / f"synthetic_train_features_{viewpoint}_{args.synthetic_factor}x.pt"
+        syn_test_path = data_dir / f"synthetic_test_features_{viewpoint}_{args.test_synthetic_factor}x.pt"
 
         if not syn_train_path.exists():
             print(f"Error: Synthetic train data not found: {syn_train_path}")

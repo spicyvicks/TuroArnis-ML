@@ -96,11 +96,11 @@ class HybridGCN(nn.Module):
         x_sum = global_add_pool(x, batch)
         mask_sum = global_add_pool(node_mask.unsqueeze(-1), batch)
         x_pool = x_sum / (mask_sum + 1e-8)
-        
+
         # Ensure hybrid_features is 2D [batch_size, num_hybrid_features]
         batch_size = batch.max().item() + 1
         hybrid_features = hybrid_features.view(batch_size, -1)
-        
+
         # Process global hybrid features
         hybrid_out = self.hybrid_mlp(hybrid_features)
         
@@ -114,19 +114,20 @@ class HybridGCN(nn.Module):
 
 def load_deployment_model(checkpoint_path, device='cpu'):
     """Load deployment model from checkpoint.
-    
+
     Handles checkpoints with incomplete config by inferring dimensions
     from the saved state dict.
     """
     ckpt = torch.load(checkpoint_path, map_location=device)
     config = ckpt.get('config', {})
     state_dict = ckpt['model_state_dict']
-    
+
     # Infer dimensions from state dict if not in config
     # node_embedding.weight: [35, node_embed_dim]
     node_embed_dim = state_dict['node_embedding.weight'].shape[1]
-    
+
     # First conv input dim = num_node_features + node_embed_dim
+    # GCNConv stores weight as [out_dim, in_dim]
     conv0_weight = None
     for key in ['convs.0.lin.weight', 'convs.0.lin_rel.weight', 'convs.0.weight']:
         if key in state_dict:
@@ -135,14 +136,14 @@ def load_deployment_model(checkpoint_path, device='cpu'):
     if conv0_weight is None:
         raise ValueError("Could not find first conv layer weight in checkpoint")
     num_node_features = conv0_weight.shape[1] - node_embed_dim
-    
+
     # hybrid_mlp.0.weight: [hidden_dim//2, num_hybrid_features]
     hybrid_mlp_weight = state_dict['hybrid_mlp.0.weight']
     num_hybrid_features = hybrid_mlp_weight.shape[1]
-    
+
     # fc2.weight: [num_classes, hidden_dim]
     num_classes = state_dict['fc2.weight'].shape[0]
-    
+
     model = HybridGCN(
         num_node_features=num_node_features,
         num_hybrid_features=num_hybrid_features,
@@ -152,15 +153,15 @@ def load_deployment_model(checkpoint_path, device='cpu'):
         dropout=config.get('dropout', 0.5),
         node_embed_dim=node_embed_dim
     ).to(device)
-    
+
     model.load_state_dict(state_dict)
     model.eval()
-    
+
     # Augment config with inferred values for reference
     config['num_node_features'] = num_node_features
     config['num_hybrid_features'] = num_hybrid_features
     config['num_classes'] = num_classes
-    
+
     return model, ckpt.get('class_names', []), config
 
 

@@ -862,20 +862,30 @@ def process_single_image(args):
         return None
 
 
-def process_dataset(viewpoint_filter=None, num_workers=None, pure_gcn=False):
+def process_dataset(viewpoint_filter=None, num_workers=None, pure_gcn=False, templates_path=None, dataset_root=None, output_dir=None):
     """Process all images and generate node + hybrid features"""
     # Load templates
-    with open(FEATURE_TEMPLATES, 'r') as f:
+    tp = templates_path if templates_path else FEATURE_TEMPLATES
+    with open(tp, 'r') as f:
         templates = json.load(f)
-    
+    print(f"[INFO] Using templates: {tp}")
+
+    # Dataset root override
+    ds_root = Path(dataset_root) if dataset_root else DATASET_ROOT
+    print(f"[INFO] Using dataset root: {ds_root}")
+
+    # Output dir override
+    out_dir = Path(output_dir) if output_dir else OUTPUT_DIR
+    print(f"[INFO] Using output dir: {out_dir}")
+
     print(f"Loaded {len(templates)} feature templates")
     if pure_gcn:
         print("[MODE] PureGCN: Using person-normalized 8-dim node features")
-    
+
     # Load stick detector once
     stick_detector = YOLO(STICK_MODEL)
-    
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
     
     if num_workers is None:
         num_workers = max(1, cpu_count() - 1)
@@ -887,7 +897,7 @@ def process_dataset(viewpoint_filter=None, num_workers=None, pure_gcn=False):
     for split in ['train', 'test']:
         all_tasks = []
         
-        split_path = DATASET_ROOT / split
+        split_path = ds_root / split
         
         for viewpoint in viewpoints:
             viewpoint_path = split_path / viewpoint
@@ -969,7 +979,7 @@ def process_dataset(viewpoint_filter=None, num_workers=None, pure_gcn=False):
         
         suffix = f"_{viewpoint_filter}" if viewpoint_filter else ""
         suffix += "_pure_gcn" if pure_gcn else ""
-        output_file = OUTPUT_DIR / f"{split}_features{suffix}.pt"
+        output_file = out_dir / f"{split}_features{suffix}.pt"
         torch.save(data, output_file)
         
         print(f"✓ Saved {split} features: {len(results)} samples to {output_file}")
@@ -988,10 +998,16 @@ if __name__ == "__main__":
                         help='Number of worker processes (default: CPU count - 1)')
     parser.add_argument('--pure_gcn', action='store_true',
                         help='Use person-normalized node features (8-dim) for PureGCN instead of standard 6-dim')
+    parser.add_argument('--templates', type=str, default=None,
+                        help='Path to feature templates JSON (default: feature_templates.json)')
+    parser.add_argument('--dataset-root', type=str, default=None,
+                        help='Override dataset root directory (default: dataset_split)')
+    parser.add_argument('--output-dir', type=str, default=None,
+                        help='Override output directory (default: hybrid_classifier/hybrid_features_v6)')
     args = parser.parse_args()
-    
+
     # Set global flag for feature extraction mode
     global _PURE_GCN_MODE
     _PURE_GCN_MODE = args.pure_gcn
-    
-    process_dataset(args.viewpoint, args.workers, pure_gcn=args.pure_gcn)
+
+    process_dataset(args.viewpoint, args.workers, pure_gcn=args.pure_gcn, templates_path=args.templates, dataset_root=args.dataset_root, output_dir=args.output_dir)
